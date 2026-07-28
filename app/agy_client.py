@@ -240,4 +240,47 @@ class AgyClient:
                         "context_truncated": context_truncated
                     }
 
+    async def generate_chat_icon(self, title: str, output_path: str):
+        def write_fallback():
+            initials = "".join([w[0].upper() for w in title.split() if w])[:2]
+            if not initials:
+                initials = "NC"
+            svg_content = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    <rect x="0" y="0" width="100" height="100" rx="20" ry="20" fill="#10b981" />
+    <text x="50" y="50" fill="white" font-size="40" font-family="sans-serif" text-anchor="middle" dominant-baseline="central">{initials}</text>
+</svg>'''
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(svg_content)
+
+        prompt = (
+            f"Generiere ein rechteckiges Avatar-Icon für einen Chat mit dem Titel '{title}'. "
+            "Der Stil soll technischer Natur sein (Technical Style). "
+            "Antworte AUSSCHLIESSLICH mit gültigem SVG-Code (beginnend mit <svg und endend mit </svg>). "
+            "Gib deiner Kreativität vollen Lauf! "
+            "Kein Markdown, keine Erklärungen, nur der rohe SVG Code."
+        )
+        
+        cmd = [self.executable_path, "--dangerously-skip-permissions", "--prompt", prompt]
+        
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout_bytes, _ = await process.communicate()
+            if process.returncode == 0:
+                output = stdout_bytes.decode('utf-8', errors='replace').strip()
+                match = re.search(r'(<svg.*?</svg>)', output, re.DOTALL | re.IGNORECASE)
+                if match:
+                    svg_code = match.group(1)
+                    with open(output_path, "w", encoding="utf-8") as f:
+                        f.write(svg_code)
+                    return
+            logger.warning(f"Failed to generate icon with agy, using fallback. Output was: {stdout_bytes}")
+            write_fallback()
+        except Exception as e:
+            logger.error(f"Error generating chat icon: {e}")
+            write_fallback()
+
 agy_client = AgyClient()

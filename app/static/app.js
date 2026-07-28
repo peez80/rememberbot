@@ -311,6 +311,22 @@ document.addEventListener("DOMContentLoaded", () => {
         // Enable system prompt button
         systemPromptBtn.disabled = false;
 
+        const session = window.lastSessions?.find(s => s.id === sessionId);
+        if (session) {
+            document.getElementById('header-chat-title').textContent = session.title;
+            const iconImg = document.getElementById('header-chat-icon');
+            const defaultIcon = document.getElementById('header-default-icon');
+            
+            if (session.has_icon) {
+                iconImg.src = `/api/sessions/${session.id}/icon?t=${Date.now()}`;
+                iconImg.style.display = 'block';
+                defaultIcon.style.display = 'none';
+            } else {
+                iconImg.style.display = 'none';
+                defaultIcon.style.display = 'block';
+            }
+        }
+
         try {
             // Fetch system prompt
             const promptRes = await fetch(`/api/sessions/${sessionId}/prompt`);
@@ -370,7 +386,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 dateStr = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             }
 
+            const iconHtml = session.has_icon 
+                ? `<img class="session-list-icon" src="/api/sessions/${session.id}/icon?t=${new Date(session.created_at || Date.now()).getTime()}">`
+                : `<i class="ph-fill ph-robot session-list-icon"></i>`;
+
             div.innerHTML = `
+                ${iconHtml}
                 <div class="session-info">
                     <div class="session-date">${dateStr || "Neu"}</div>
                     <div class="session-title">${session.title}</div>

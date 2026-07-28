@@ -25,7 +25,8 @@ from .storage import (
     init_storage, DATA_DIR,
     create_session, get_sessions, get_session_history,
     save_session_message, update_session_title, delete_session,
-    get_session_prompt, update_session_prompt, init_user_storage
+    get_session_prompt, update_session_prompt, init_user_storage,
+    get_session_icon_path, get_session_icon_target_path
 )
 
 app = FastAPI(title="RememberBot")
@@ -89,6 +90,14 @@ def get_current_user(request: Request) -> str:
     if not session_token or session_token not in ACTIVE_SESSIONS:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return ACTIVE_SESSIONS[session_token]
+
+# --- Background Task Helper ---
+_active_tasks = set()
+
+def fire_and_forget(coro):
+    task = asyncio.create_task(coro)
+    _active_tasks.add(task)
+    task.add_done_callback(_active_tasks.discard)
 
 # --- Endpoints ---
 
@@ -154,7 +163,20 @@ async def get_sessions_endpoint(username: str = Depends(get_current_user)):
 @app.get("/api/sessions/{session_id}/history", response_model=List[ChatMessage])
 async def get_history_endpoint(session_id: str, username: str = Depends(get_current_user)):
     history = await get_session_history(username, session_id)
+    if get_session_icon_path(username, session_id) is None:
+        sessions = await get_sessions(username)
+        session_metadata = next((s for s in sessions if s["id"] == session_id), None)
+        if session_metadata and session_metadata.get("title") != "Neuer Chat":
+            target_path = get_session_icon_target_path(username, session_id)
+            fire_and_forget(agy_client.generate_chat_icon(session_metadata["title"], target_path))
     return history
+
+@app.get("/api/sessions/{session_id}/icon")
+async def get_session_icon(session_id: str, username: str = Depends(get_current_user)):
+    icon_path = get_session_icon_path(username, session_id)
+    if icon_path and os.path.exists(icon_path):
+        return FileResponse(icon_path, media_type="image/svg+xml")
+    raise HTTPException(status_code=404, detail="Icon not found")
 
 @app.delete("/api/sessions/{session_id}")
 async def delete_session_endpoint(session_id: str, username: str = Depends(get_current_user)):
@@ -190,6 +212,8 @@ async def update_title_endpoint(session_id: str, req: SessionTitleRequest, usern
         raise HTTPException(status_code=404, detail="Session not found")
         
     await update_session_title(username, session_id, req.title)
+    target_path = get_session_icon_target_path(username, session_id)
+    fire_and_forget(agy_client.generate_chat_icon(req.title, target_path))
     return {"success": True}
 
 @app.post("/api/sessions/{session_id}/chat")
@@ -254,6 +278,8 @@ async def chat_endpoint(
             # Use first 30 chars
             new_title = (message[:27] + "...") if len(message) > 30 else message
             await update_session_title(username, session_id, new_title)
+            target_path = get_session_icon_target_path(username, session_id)
+            fire_and_forget(agy_client.generate_chat_icon(new_title, target_path))
 
         # Save the user's message to history
         user_msg_data = {

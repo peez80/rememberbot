@@ -92,6 +92,10 @@ async def test_chat_endpoint_text_only(mock_get_prompt, mock_update_title, mock_
         return mock_response
     mock_agy_client.process_message.side_effect = mock_process
     
+    async def mock_generate_icon(*args, **kwargs):
+        pass
+    mock_agy_client.generate_chat_icon.side_effect = mock_generate_icon
+    
     response = client.post("/api/sessions/sess-123/chat", data={"message": "Ich habe Pizza gegessen"})
     
     assert response.status_code == 200
@@ -130,6 +134,10 @@ async def test_chat_endpoint_with_image(mock_get_prompt, mock_update_title, mock
     async def mock_process(*args, **kwargs):
         return mock_response
     mock_agy_client.process_message.side_effect = mock_process
+    
+    async def mock_generate_icon(*args, **kwargs):
+        pass
+    mock_agy_client.generate_chat_icon.side_effect = mock_generate_icon
     
     import base64
     # Minimal 1x1 transparent PNG
@@ -205,9 +213,15 @@ async def test_uploads_endpoint(mock_exists):
 
 @patch("app.main.update_session_title")
 @patch("app.main.get_sessions")
+@patch("app.main.agy_client")
 @pytest.mark.asyncio
-async def test_update_title_endpoint(mock_get_sessions, mock_update_title):
+async def test_update_title_endpoint(mock_agy_client, mock_get_sessions, mock_update_title):
     mock_auth()
+    
+    async def mock_generate_icon(*args, **kwargs):
+        pass
+    mock_agy_client.generate_chat_icon.side_effect = mock_generate_icon
+
     # Mocking get_sessions to allow the endpoint to verify the session exists
     mock_get_sessions.return_value = [{"id": "sess-123", "title": "Old Title"}]
     

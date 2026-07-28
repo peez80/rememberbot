@@ -39,6 +39,16 @@ def get_session_filepath(username: str, session_id: str) -> str:
     safe_session_id = os.path.basename(session_id)
     return os.path.join(DATA_DIR, username, "sessions", safe_session_id, "session.json")
 
+def get_session_icon_target_path(username: str, session_id: str) -> str:
+    safe_session_id = os.path.basename(session_id)
+    return os.path.join(DATA_DIR, username, "sessions", safe_session_id, "icon.svg")
+
+def get_session_icon_path(username: str, session_id: str) -> str | None:
+    target = get_session_icon_target_path(username, session_id)
+    if os.path.exists(target):
+        return target
+    return None
+
 def _sync_create_session(username: str, title: str) -> str:
     init_user_storage(username)
     session_id = uuid.uuid4().hex
@@ -75,10 +85,13 @@ def _sync_get_sessions(username: str) -> list:
                 try:
                     with open(filepath, "r", encoding="utf-8") as f:
                         data = json.load(f)
+                        session_id = data.get("id")
+                        has_icon = get_session_icon_path(username, session_id) is not None
                         sessions.append({
-                            "id": data.get("id"),
+                            "id": session_id,
                             "title": data.get("title", "Chat"),
-                            "created_at": data.get("created_at", "")
+                            "created_at": data.get("created_at", ""),
+                            "has_icon": has_icon
                         })
                 except Exception:
                     continue
