@@ -26,3 +26,6 @@ Diese Datei enthält projektspezifische Verhaltensregeln und Standard-Anweisunge
 - Führe **alle** Befehle (wie Tests, Skripte, Applikationsstart) immer streng über `docker compose` bzw. im Container aus. 
 - Nutze auf dem Host-System keine nativen Tools wie `uv`, lokales `pip` oder lokales `python`.
 - Beispiel für Tests: `docker compose run --rm web pytest tests/`
+- **WSL & Test-Performance / Netzwerk-Hinweis:** Frage den Nutzer einmalig pro Session, ob er aktuell in WSL mit der CLI unterwegs ist. Falls ja, müssen Tests bzw. Container mit `network=host` (bzw. `--net=host`) gestartet werden (z. B. `docker compose run --rm --net=host web pytest tests/`), da sich die Tests andernfalls wegen NAT'ing-Problemen zwischen WSL und Docker-Container nicht beenden und ewig hängen.
+
+

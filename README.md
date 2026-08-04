@@ -90,6 +90,14 @@ To run the test suite, use Docker Compose to execute `pytest` within the contain
 docker-compose run --rm web pytest tests/
 ```
 
+> [!TIP]
+> **Hinweis bei WSL & unendlich hängenden Tests:** Falls Tests über `docker compose` nicht beendet werden (ewig hängen), liegt das meist daran, dass die CLI unter WSL im Docker-Container läuft und NAT'ing-Probleme verursacht. Starte die Tests in diesem Fall mit `--net=host`:
+> ```bash
+> docker-compose run --rm --net=host web pytest tests/
+> ```
+
+
+
 This will run all tests (both unit tests and Playwright E2E browser tests) together:
 - Local storage logic (`tests/test_storage.py`)
 - API endpoints and chat behavior (`tests/test_main.py`)
