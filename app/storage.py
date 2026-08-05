@@ -80,6 +80,8 @@ def _sync_get_sessions(username: str) -> list:
     for dirname in os.listdir(sessions_dir):
         dir_path = os.path.join(sessions_dir, dirname)
         if os.path.isdir(dir_path):
+            if os.path.exists(os.path.join(dir_path, "_DELETED.marker")):
+                continue
             filepath = os.path.join(dir_path, "session.json")
             if os.path.isfile(filepath):
                 try:
@@ -163,7 +165,9 @@ def _sync_delete_session(username: str, session_id: str):
     filepath = get_session_filepath(username, session_id)
     session_dir = os.path.dirname(filepath)
     if os.path.exists(session_dir):
-        shutil.rmtree(session_dir)
+        marker_path = os.path.join(session_dir, "_DELETED.marker")
+        with open(marker_path, "w") as f:
+            f.write("")
 
 async def delete_session(username: str, session_id: str):
     async with session_locks[session_id]:

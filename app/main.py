@@ -162,6 +162,11 @@ async def get_sessions_endpoint(username: str = Depends(get_current_user)):
 
 @app.get("/api/sessions/{session_id}/history", response_model=List[ChatMessage])
 async def get_history_endpoint(session_id: str, username: str = Depends(get_current_user)):
+    sessions = await get_sessions(username)
+    session_metadata = next((s for s in sessions if s["id"] == session_id), None)
+    if not session_metadata:
+        raise HTTPException(status_code=404, detail="Session not found")
+        
     history = await get_session_history(username, session_id)
     if get_session_icon_path(username, session_id) is None:
         sessions = await get_sessions(username)
@@ -193,11 +198,21 @@ class SystemPromptRequest(BaseModel):
 
 @app.get("/api/sessions/{session_id}/prompt")
 async def get_prompt_endpoint(session_id: str, username: str = Depends(get_current_user)):
+    sessions = await get_sessions(username)
+    session_metadata = next((s for s in sessions if s["id"] == session_id), None)
+    if not session_metadata:
+        raise HTTPException(status_code=404, detail="Session not found")
+        
     prompt = await get_session_prompt(username, session_id)
     return {"prompt": prompt}
 
 @app.put("/api/sessions/{session_id}/prompt")
 async def update_prompt_endpoint(session_id: str, req: SystemPromptRequest, username: str = Depends(get_current_user)):
+    sessions = await get_sessions(username)
+    session_metadata = next((s for s in sessions if s["id"] == session_id), None)
+    if not session_metadata:
+        raise HTTPException(status_code=404, detail="Session not found")
+        
     await update_session_prompt(username, session_id, req.prompt)
     return {"success": True}
 

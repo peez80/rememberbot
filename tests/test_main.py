@@ -60,10 +60,12 @@ async def test_get_sessions_endpoint(mock_get):
     assert response.json() == [{"id": "1", "title": "Chat 1"}]
     mock_get.assert_called_once_with("testuser")
 
+@patch("app.main.get_sessions")
 @patch("app.main.get_session_history")
 @pytest.mark.asyncio
-async def test_get_history_endpoint(mock_history):
+async def test_get_history_endpoint(mock_history, mock_get_sessions):
     mock_auth()
+    mock_get_sessions.return_value = [{"id": "sess-123", "title": "Test"}]
     mock_history.return_value = [{"text": "Hi", "is_user": True, "image_urls": [], "images": None, "timestamp": None}]
     response = client.get("/api/sessions/sess-123/history")
     assert response.status_code == 200
@@ -178,20 +180,24 @@ async def test_delete_session_endpoint(mock_get_sessions, mock_delete_session):
     response = client.delete("/api/sessions/unknown")
     assert response.status_code == 404
 
+@patch("app.main.get_sessions")
 @patch("app.main.get_session_prompt")
 @pytest.mark.asyncio
-async def test_get_prompt_endpoint(mock_get_prompt):
+async def test_get_prompt_endpoint(mock_get_prompt, mock_get_sessions):
     mock_auth()
+    mock_get_sessions.return_value = [{"id": "sess-123", "title": "Test"}]
     mock_get_prompt.return_value = "Test prompt"
     response = client.get("/api/sessions/sess-123/prompt")
     assert response.status_code == 200
     assert response.json() == {"prompt": "Test prompt"}
     mock_get_prompt.assert_called_once_with("testuser", "sess-123")
 
+@patch("app.main.get_sessions")
 @patch("app.main.update_session_prompt")
 @pytest.mark.asyncio
-async def test_update_prompt_endpoint(mock_update_prompt):
+async def test_update_prompt_endpoint(mock_update_prompt, mock_get_sessions):
     mock_auth()
+    mock_get_sessions.return_value = [{"id": "sess-123", "title": "Test"}]
     response = client.put("/api/sessions/sess-123/prompt", json={"prompt": "New prompt"})
     assert response.status_code == 200
     assert response.json() == {"success": True}

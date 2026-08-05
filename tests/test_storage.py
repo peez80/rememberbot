@@ -55,7 +55,14 @@ async def test_create_session(mock_file, mock_datetime, mock_uuid, mock_exists):
 async def test_get_sessions(mock_file, mock_isfile, mock_isdir, mock_listdir, mock_exists):
     from app.storage import get_sessions
     
-    mock_exists.return_value = True
+    def mock_exists_side_effect(path):
+        if path.endswith("_DELETED.marker"):
+            if "1" in path:
+                return True
+            return False
+        return True
+        
+    mock_exists.side_effect = mock_exists_side_effect
     mock_listdir.return_value = ["1", "2", "other.txt"]
     mock_isdir.side_effect = lambda path: path.endswith("1") or path.endswith("2")
     mock_isfile.return_value = True
@@ -64,17 +71,14 @@ async def test_get_sessions(mock_file, mock_isfile, mock_isdir, mock_listdir, mo
     session2 = json.dumps({"id": "2", "title": "B", "created_at": "2026-07-07T12:00:00+00:00", "history": []})
     
     mock_file.side_effect = [
-        mock_open(read_data=session1).return_value,
         mock_open(read_data=session2).return_value
     ]
     
     username = "testuser"
     sessions = await get_sessions(username)
     
-    assert len(sessions) == 2
+    assert len(sessions) == 1
     assert sessions[0]["id"] == "2"
-    assert sessions[1]["id"] == "1"
-    assert "testuser" in mock_exists.call_args[0][0]
 
 @patch('builtins.open', new_callable=mock_open)
 @patch('app.storage.os.path.exists')
@@ -149,19 +153,56 @@ async def test_update_session_title(mock_exists, mock_file):
     
     assert loaded_data["title"] == "New Title"
 
+@patch('builtins.open', new_callable=mock_open)
 @patch('app.storage.os.path.exists')
-@patch('app.storage.shutil.rmtree')
 @pytest.mark.asyncio
-async def test_delete_session(mock_rmtree, mock_exists):
+async def test_delete_session(mock_exists, mock_file):
     from app.storage import delete_session
     mock_exists.return_value = True
     
     await delete_session("testuser", "123")
     
-    mock_exists.assert_called_once()
-    mock_rmtree.assert_called_once()
-    assert "testuser" in mock_rmtree.call_args[0][0]
-    assert "123" in mock_rmtree.call_args[0][0]
+    mock_file.assert_called_once()
+    assert "_DELETED.marker" in mock_file.call_args[0][0]
+    assert "w" in mock_file.call_args[0][1]
+
+@patch('app.storage.os.path.exists')
+@patch('app.storage.os.listdir')
+@patch('app.storage.os.path.isdir')
+@patch('app.storage.os.path.isfile')
+@patch('builtins.open', new_callable=mock_open)
+@pytest.mark.asyncio
+async def test_undelete_session_restores_access(mock_file, mock_isfile, mock_isdir, mock_listdir, mock_exists):
+    from app.storage import get_sessions
+    
+    deleted_marker_exists = True
+    
+    def mock_exists_side_effect(path):
+        if path.endswith("_DELETED.marker"):
+            return deleted_marker_exists
+        return True
+        
+    mock_exists.side_effect = mock_exists_side_effect
+    mock_listdir.return_value = ["1"]
+    mock_isdir.return_value = True
+    mock_isfile.return_value = True
+    
+    session1 = json.dumps({"id": "1", "title": "A", "created_at": "2026-07-06T12:00:00+00:00", "history": []})
+    mock_file.return_value.read.return_value = session1
+    
+    username = "testuser"
+    
+    # Check that it's hidden while deleted
+    sessions = await get_sessions(username)
+    assert len(sessions) == 0
+    
+    # Simulate removing the marker file
+    deleted_marker_exists = False
+    
+    # Check that it appears again
+    sessions = await get_sessions(username)
+    assert len(sessions) == 1
+    assert sessions[0]["id"] == "1"
 
 @patch('builtins.open', new_callable=mock_open)
 @patch('app.storage.os.path.exists')
