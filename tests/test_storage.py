@@ -148,17 +148,19 @@ async def test_update_session_title(mock_exists, mock_file):
 
 @patch('app.storage.os.rename')
 @patch('app.storage.os.path.exists')
+@patch('app.storage.time.time')
 @pytest.mark.asyncio
-async def test_delete_session(mock_exists, mock_rename):
+async def test_delete_session(mock_time, mock_exists, mock_rename):
     from app.storage import delete_session
     mock_exists.return_value = True
+    mock_time.return_value = 1700000000.0
     
     await delete_session("testuser", "123")
     
     mock_rename.assert_called_once()
     args = mock_rename.call_args[0]
     assert args[0].endswith("123")
-    assert args[1].endswith("DELETED_123")
+    assert args[1].endswith("DELETED_1700000000_123")
 
 @patch('app.storage.os.path.exists')
 @patch('app.storage.os.listdir')
@@ -301,3 +303,75 @@ async def test_session_json_schema(mock_file, mock_uuid, mock_exists):
     # 2. Prüfe, ob keine unerwarteten Keys vorhanden sind (Strict Mode)
     for key in loaded_data.keys():
         assert key in expected_schema, f"Unerwarteter Key in session.json: {key}. Das Schema hat sich geändert!"
+
+@patch('app.storage.os.path.exists')
+@patch('app.storage.os.listdir')
+@patch('app.storage.shutil.rmtree')
+@patch('app.storage.time.time')
+@patch('builtins.open', new_callable=mock_open)
+@pytest.mark.asyncio
+async def test_cleanup_deleted_sessions(mock_file, mock_time, mock_rmtree, mock_listdir, mock_exists):
+    from app.storage import cleanup_deleted_sessions
+    
+    # Simulate current time
+    current_time = 1700000000.0
+    mock_time.return_value = current_time
+    
+    # 35 days ago = old, 10 days ago = new
+    old_time = current_time - (35 * 86400)
+    new_time = current_time - (10 * 86400)
+    
+    # Setup mock file to not exist so rate limiting passes
+    def exists_side_effect(path):
+        if "testuser" in path and not path.endswith("cleanup_last_run.txt"):
+            return True
+        return False
+    mock_exists.side_effect = exists_side_effect
+    
+    # Mock listdir to return some deleted folders and one active old folder
+    mock_listdir.return_value = [
+        f"DELETED_{int(old_time)}_old",
+        f"DELETED_{int(new_time)}_new",
+        "DELETED_no_timestamp_fallback",
+        "active_old_session"
+    ]
+    
+    with patch('app.storage.os.stat') as mock_stat:
+        mock_stat_result = MagicMock()
+        mock_stat_result.st_mtime = old_time
+        mock_stat.return_value = mock_stat_result
+        
+        await cleanup_deleted_sessions("testuser")
+        
+        # rmtree should be called twice (old timestamp and old fallback)
+        assert mock_rmtree.call_count == 2
+        calls = [call.args[0] for call in mock_rmtree.call_args_list]
+        assert any(f"DELETED_{int(old_time)}_old" in call for call in calls)
+        assert any("DELETED_no_timestamp_fallback" in call for call in calls)
+        assert not any(f"DELETED_{int(new_time)}_new" in call for call in calls)
+        assert not any("active_old_session" in call for call in calls)
+
+@patch('app.storage.os.path.exists')
+@patch('app.storage.time.time')
+@patch('builtins.open', new_callable=mock_open)
+@pytest.mark.asyncio
+async def test_cleanup_rate_limit(mock_file, mock_time, mock_exists):
+    from app.storage import cleanup_deleted_sessions
+    
+    current_time = 1700000000.0
+    mock_time.return_value = current_time
+    
+    # cleanup_last_run.txt exists
+    def exists_side_effect(path):
+        if "testuser" in path:
+            return True
+        return False
+    mock_exists.side_effect = exists_side_effect
+    
+    # Last run was 10 hours ago (less than 24h)
+    mock_file.return_value.read.return_value = str(current_time - (10 * 3600))
+    
+    with patch('app.storage.os.listdir') as mock_listdir:
+        await cleanup_deleted_sessions("testuser")
+        # Should exit early and not call listdir
+        mock_listdir.assert_not_called()

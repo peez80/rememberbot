@@ -2,6 +2,7 @@ import os
 import json
 import uuid
 import shutil
+import time
 from datetime import datetime, timezone
 import asyncio
 from collections import defaultdict
@@ -166,7 +167,7 @@ def _sync_delete_session(username: str, session_id: str):
     session_dir = os.path.dirname(filepath)
     if os.path.exists(session_dir):
         parent_dir = os.path.dirname(session_dir)
-        new_dir = os.path.join(parent_dir, f"DELETED_{os.path.basename(session_dir)}")
+        new_dir = os.path.join(parent_dir, f"DELETED_{int(time.time())}_{os.path.basename(session_dir)}")
         try:
             os.rename(session_dir, new_dir)
         except OSError:
@@ -211,3 +212,55 @@ def _sync_update_session_prompt(username: str, session_id: str, prompt: str):
 async def update_session_prompt(username: str, session_id: str, prompt: str):
     async with session_locks[session_id]:
         await asyncio.to_thread(_sync_update_session_prompt, username, session_id, prompt)
+
+def _sync_cleanup_deleted_sessions(username: str, days: int = 30):
+    user_dir = os.path.join(DATA_DIR, username)
+    if not os.path.exists(user_dir):
+        return
+        
+    last_run_file = os.path.join(user_dir, "cleanup_last_run.txt")
+    current_time = time.time()
+    
+    if os.path.exists(last_run_file):
+        try:
+            with open(last_run_file, "r", encoding="utf-8") as f:
+                last_run = float(f.read().strip())
+                if current_time - last_run < 86400:
+                    return
+        except Exception:
+            pass
+            
+    sessions_dir = os.path.join(user_dir, "sessions")
+    if not os.path.exists(sessions_dir):
+        return
+        
+    for dirname in os.listdir(sessions_dir):
+        if not dirname.startswith("DELETED_"):
+            continue
+            
+        dir_path = os.path.join(sessions_dir, dirname)
+        parts = dirname.split("_")
+        
+        folder_time = None
+        if len(parts) >= 3 and parts[1].isdigit():
+            folder_time = float(parts[1])
+        else:
+            try:
+                folder_time = os.stat(dir_path).st_mtime
+            except Exception:
+                pass
+                
+        if folder_time is not None and current_time - folder_time > days * 86400:
+            try:
+                shutil.rmtree(dir_path)
+            except Exception:
+                pass
+                
+    try:
+        with open(last_run_file, "w", encoding="utf-8") as f:
+            f.write(str(current_time))
+    except Exception:
+        pass
+
+async def cleanup_deleted_sessions(username: str, days: int = 30):
+    await asyncio.to_thread(_sync_cleanup_deleted_sessions, username, days)

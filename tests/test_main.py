@@ -50,15 +50,19 @@ async def test_create_session_endpoint(mock_create):
     assert response.json() == {"id": "sess-123", "title": "Neuer Chat"}
     mock_create.assert_called_once_with("testuser", "Neuer Chat")
 
+@patch("app.main.cleanup_deleted_sessions")
+@patch("app.main.fire_and_forget")
 @patch("app.main.get_sessions")
 @pytest.mark.asyncio
-async def test_get_sessions_endpoint(mock_get):
+async def test_get_sessions_endpoint(mock_get, mock_fire, mock_cleanup):
     mock_auth()
     mock_get.return_value = [{"id": "1", "title": "Chat 1"}]
     response = client.get("/api/sessions")
     assert response.status_code == 200
     assert response.json() == [{"id": "1", "title": "Chat 1"}]
     mock_get.assert_called_once_with("testuser")
+    mock_cleanup.assert_called_once_with("testuser")
+    mock_fire.assert_called_once()
 
 @patch("app.main.get_sessions")
 @patch("app.main.get_session_history")

@@ -26,7 +26,8 @@ from .storage import (
     create_session, get_sessions, get_session_history,
     save_session_message, update_session_title, delete_session,
     get_session_prompt, update_session_prompt, init_user_storage,
-    get_session_icon_path, get_session_icon_target_path
+    get_session_icon_path, get_session_icon_target_path,
+    cleanup_deleted_sessions
 )
 
 app = FastAPI(title="RememberBot")
@@ -158,6 +159,7 @@ async def create_session_endpoint(username: str = Depends(get_current_user)):
 
 @app.get("/api/sessions")
 async def get_sessions_endpoint(username: str = Depends(get_current_user)):
+    fire_and_forget(cleanup_deleted_sessions(username))
     return await get_sessions(username)
 
 @app.get("/api/sessions/{session_id}/history", response_model=List[ChatMessage])
