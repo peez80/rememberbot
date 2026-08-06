@@ -55,16 +55,9 @@ async def test_create_session(mock_file, mock_datetime, mock_uuid, mock_exists):
 async def test_get_sessions(mock_file, mock_isfile, mock_isdir, mock_listdir, mock_exists):
     from app.storage import get_sessions
     
-    def mock_exists_side_effect(path):
-        if path.endswith("_DELETED.marker"):
-            if "1" in path:
-                return True
-            return False
-        return True
-        
-    mock_exists.side_effect = mock_exists_side_effect
-    mock_listdir.return_value = ["1", "2", "other.txt"]
-    mock_isdir.side_effect = lambda path: path.endswith("1") or path.endswith("2")
+    mock_exists.return_value = True
+    mock_listdir.return_value = ["DELETED_1", "2", "other.txt"]
+    mock_isdir.side_effect = lambda path: "1" in path or "2" in path
     mock_isfile.return_value = True
     
     session1 = json.dumps({"id": "1", "title": "A", "created_at": "2026-07-06T12:00:00+00:00", "history": []})
@@ -153,18 +146,19 @@ async def test_update_session_title(mock_exists, mock_file):
     
     assert loaded_data["title"] == "New Title"
 
-@patch('builtins.open', new_callable=mock_open)
+@patch('app.storage.os.rename')
 @patch('app.storage.os.path.exists')
 @pytest.mark.asyncio
-async def test_delete_session(mock_exists, mock_file):
+async def test_delete_session(mock_exists, mock_rename):
     from app.storage import delete_session
     mock_exists.return_value = True
     
     await delete_session("testuser", "123")
     
-    mock_file.assert_called_once()
-    assert "_DELETED.marker" in mock_file.call_args[0][0]
-    assert "w" in mock_file.call_args[0][1]
+    mock_rename.assert_called_once()
+    args = mock_rename.call_args[0]
+    assert args[0].endswith("123")
+    assert args[1].endswith("DELETED_123")
 
 @patch('app.storage.os.path.exists')
 @patch('app.storage.os.listdir')
@@ -175,15 +169,8 @@ async def test_delete_session(mock_exists, mock_file):
 async def test_undelete_session_restores_access(mock_file, mock_isfile, mock_isdir, mock_listdir, mock_exists):
     from app.storage import get_sessions
     
-    deleted_marker_exists = True
-    
-    def mock_exists_side_effect(path):
-        if path.endswith("_DELETED.marker"):
-            return deleted_marker_exists
-        return True
-        
-    mock_exists.side_effect = mock_exists_side_effect
-    mock_listdir.return_value = ["1"]
+    mock_exists.return_value = True
+    mock_listdir.return_value = ["DELETED_1"]
     mock_isdir.return_value = True
     mock_isfile.return_value = True
     
@@ -196,8 +183,8 @@ async def test_undelete_session_restores_access(mock_file, mock_isfile, mock_isd
     sessions = await get_sessions(username)
     assert len(sessions) == 0
     
-    # Simulate removing the marker file
-    deleted_marker_exists = False
+    # Simulate undoing the rename
+    mock_listdir.return_value = ["1"]
     
     # Check that it appears again
     sessions = await get_sessions(username)
