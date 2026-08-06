@@ -13,6 +13,10 @@ Diese Datei enthält projektspezifische Verhaltensregeln und Standard-Anweisunge
 - Nutze reguläres CSS (Vanilla CSS). Verwende **kein** TailwindCSS, es sei denn, es wird explizit gefordert.
 
 ## 3. Testing
+- Verfolge bei allen Code-Änderungen strikt den **Test-Driven Development (TDD)** Ansatz (Red, Green, Refactor):
+  1. **Red:** Schreibe oder aktualisiere zuerst die Tests, bevor du Implementierungsänderungen vornimmst. Führe die Tests aus und stelle sicher, dass sie fehlschlagen.
+  2. **Green:** Implementiere den minimale Code-Menge, um die Tests erfolgreich passieren zu lassen. Führe die Tests erneut aus.
+  3. **Refactor:** Räume den Code bei Bedarf auf, während alle Tests weiterhin grün bleiben.
 - Wenn neuer Code geschrieben wird, erstelle oder erweitere immer direkt die passenden Unit-Tests im `tests/` Ordner.
 - Test-Framework ist `pytest`.
 
