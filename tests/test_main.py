@@ -35,8 +35,8 @@ async def test_unauthenticated_access():
     assert client.get("/api/sessions").status_code == 401
     assert client.get("/api/sessions/123/history").status_code == 401
     assert client.delete("/api/sessions/123").status_code == 401
-    assert client.get("/api/sessions/123/prompt").status_code == 401
-    assert client.put("/api/sessions/123/prompt", json={"prompt":"test"}).status_code == 401
+    assert client.get("/api/sessions/123/settings").status_code == 401
+    assert client.put("/api/sessions/123/settings", json={"prompt":"test", "include_gps": False}).status_code == 401
     assert client.post("/api/sessions/123/chat", data={"message":"test"}).status_code == 401
     assert client.get("/uploads/123/test.jpg").status_code == 401
 
@@ -81,12 +81,12 @@ async def test_get_history_endpoint(mock_history, mock_get_sessions):
 @patch("app.main.save_session_message")
 @patch("app.main.get_sessions")
 @patch("app.main.update_session_title")
-@patch("app.main.get_session_prompt")
+@patch("app.main.get_session_settings")
 @pytest.mark.asyncio
-async def test_chat_endpoint_text_only(mock_get_prompt, mock_update_title, mock_get_sessions, mock_save_msg, mock_get_history, mock_agy_client):
+async def test_chat_endpoint_text_only(mock_get_settings, mock_update_title, mock_get_sessions, mock_save_msg, mock_get_history, mock_agy_client):
     mock_auth()
     mock_get_history.return_value = []
-    mock_get_prompt.return_value = "Test prompt"
+    mock_get_settings.return_value = {"prompt": "Test prompt", "include_gps": False}
     # Mock get_sessions to return a session with "Neuer Chat" title to test auto-rename
     mock_get_sessions.return_value = [{"id": "sess-123", "title": "Neuer Chat"}]
     
@@ -125,12 +125,12 @@ async def test_chat_endpoint_text_only(mock_get_prompt, mock_update_title, mock_
 @patch("app.main.save_session_message")
 @patch("app.main.get_sessions")
 @patch("app.main.update_session_title")
-@patch("app.main.get_session_prompt")
+@patch("app.main.get_session_settings")
 @pytest.mark.asyncio
-async def test_chat_endpoint_with_image(mock_get_prompt, mock_update_title, mock_get_sessions, mock_save_msg, mock_get_history, mock_agy_client):
+async def test_chat_endpoint_with_image(mock_get_settings, mock_update_title, mock_get_sessions, mock_save_msg, mock_get_history, mock_agy_client):
     mock_auth()
     mock_get_history.return_value = []
-    mock_get_prompt.return_value = "Test prompt"
+    mock_get_settings.return_value = {"prompt": "Test prompt", "include_gps": False}
     mock_get_sessions.return_value = [{"id": "sess-img-123", "title": "Neuer Chat"}]
     
     mock_response = {
@@ -185,27 +185,27 @@ async def test_delete_session_endpoint(mock_get_sessions, mock_delete_session):
     assert response.status_code == 404
 
 @patch("app.main.get_sessions")
-@patch("app.main.get_session_prompt")
+@patch("app.main.get_session_settings")
 @pytest.mark.asyncio
-async def test_get_prompt_endpoint(mock_get_prompt, mock_get_sessions):
+async def test_get_settings_endpoint(mock_get_settings, mock_get_sessions):
     mock_auth()
     mock_get_sessions.return_value = [{"id": "sess-123", "title": "Test"}]
-    mock_get_prompt.return_value = "Test prompt"
-    response = client.get("/api/sessions/sess-123/prompt")
+    mock_get_settings.return_value = {"prompt": "Test prompt", "include_gps": True}
+    response = client.get("/api/sessions/sess-123/settings")
     assert response.status_code == 200
-    assert response.json() == {"prompt": "Test prompt"}
-    mock_get_prompt.assert_called_once_with("testuser", "sess-123")
+    assert response.json() == {"prompt": "Test prompt", "include_gps": True}
+    mock_get_settings.assert_called_once_with("testuser", "sess-123")
 
 @patch("app.main.get_sessions")
-@patch("app.main.update_session_prompt")
+@patch("app.main.update_session_settings")
 @pytest.mark.asyncio
-async def test_update_prompt_endpoint(mock_update_prompt, mock_get_sessions):
+async def test_update_settings_endpoint(mock_update_settings, mock_get_sessions):
     mock_auth()
     mock_get_sessions.return_value = [{"id": "sess-123", "title": "Test"}]
-    response = client.put("/api/sessions/sess-123/prompt", json={"prompt": "New prompt"})
+    response = client.put("/api/sessions/sess-123/settings", json={"prompt": "New prompt", "include_gps": True})
     assert response.status_code == 200
     assert response.json() == {"success": True}
-    mock_update_prompt.assert_called_once_with("testuser", "sess-123", "New prompt")
+    mock_update_settings.assert_called_once_with("testuser", "sess-123", "New prompt", True)
 
 @patch("app.main.os.path.exists")
 @pytest.mark.asyncio
@@ -248,3 +248,44 @@ async def test_update_title_endpoint_not_found(mock_get_sessions):
     
     response = client.put("/api/sessions/sess-123/title", json={"title": "New Title"})
     assert response.status_code == 404
+
+@patch("app.main.agy_client")
+@patch("app.main.get_session_history")
+@patch("app.main.save_session_message")
+@patch("app.main.get_sessions")
+@patch("app.main.update_session_title")
+@patch("app.main.get_session_settings")
+@pytest.mark.asyncio
+async def test_chat_endpoint_with_location(mock_get_settings, mock_update_title, mock_get_sessions, mock_save_msg, mock_get_history, mock_agy_client):
+    mock_auth()
+    mock_get_history.return_value = []
+    mock_get_settings.return_value = {"prompt": "", "include_gps": True}
+    mock_get_sessions.return_value = [{"id": "sess-loc", "title": "Neuer Chat"}]
+    
+    mock_response = {
+        "reply": "Standort erhalten.",
+        "context_truncated": False
+    }
+    async def mock_process(*args, **kwargs):
+        return mock_response
+    mock_agy_client.process_message.side_effect = mock_process
+    
+    async def mock_generate_icon(*args, **kwargs):
+        pass
+    mock_agy_client.generate_chat_icon.side_effect = mock_generate_icon
+    
+    response = client.post("/api/sessions/sess-loc/chat", data={
+        "message": "Wo bin ich?",
+        "location": "Lat: 48.0, Lon: 11.0"
+    })
+    
+    assert response.status_code == 200
+    json_resp = response.json()
+    assert json_resp["reply"] == "Standort erhalten."
+    
+    # Verify messages saved
+    assert mock_save_msg.call_count == 2
+    user_msg_call = mock_save_msg.call_args_list[0][0][2]
+    # Check that location was appended to text
+    assert "Wo bin ich?" in user_msg_call["text"]
+    assert "[GPS: Lat: 48.0, Lon: 11.0]" in user_msg_call["text"]

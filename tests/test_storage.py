@@ -196,24 +196,26 @@ async def test_undelete_session_restores_access(mock_file, mock_isfile, mock_isd
 @patch('builtins.open', new_callable=mock_open)
 @patch('app.storage.os.path.exists')
 @pytest.mark.asyncio
-async def test_get_session_prompt(mock_exists, mock_file):
-    from app.storage import get_session_prompt
+async def test_get_session_settings(mock_exists, mock_file):
+    from app.storage import get_session_settings
     mock_exists.return_value = True
     
     session_data = json.dumps({
         "id": "123",
-        "system_prompt": "You are a chef."
+        "system_prompt": "You are a chef.",
+        "include_gps": True
     })
     mock_file.return_value.read.return_value = session_data
     
-    prompt = await get_session_prompt("testuser", "123")
-    assert prompt == "You are a chef."
+    settings = await get_session_settings("testuser", "123")
+    assert settings["prompt"] == "You are a chef."
+    assert settings["include_gps"] is True
 
 @patch('builtins.open', new_callable=mock_open)
 @patch('app.storage.os.path.exists')
 @pytest.mark.asyncio
-async def test_get_session_prompt_fallback(mock_exists, mock_file):
-    from app.storage import get_session_prompt
+async def test_get_session_settings_fallback(mock_exists, mock_file):
+    from app.storage import get_session_settings
     mock_exists.return_value = True
     
     session_data = json.dumps({
@@ -221,30 +223,33 @@ async def test_get_session_prompt_fallback(mock_exists, mock_file):
     })
     mock_file.return_value.read.return_value = session_data
     
-    prompt = await get_session_prompt("testuser", "123")
-    assert prompt == ""
+    settings = await get_session_settings("testuser", "123")
+    assert settings["prompt"] == ""
+    assert settings["include_gps"] is False
 
 @patch('builtins.open', new_callable=mock_open)
 @patch('app.storage.os.path.exists')
 @pytest.mark.asyncio
-async def test_update_session_prompt(mock_exists, mock_file):
-    from app.storage import update_session_prompt
+async def test_update_session_settings(mock_exists, mock_file):
+    from app.storage import update_session_settings
     mock_exists.return_value = True
     
     session_data = json.dumps({
         "id": "123",
-        "system_prompt": ""
+        "system_prompt": "",
+        "include_gps": False
     })
     
     mock_file.return_value.read.return_value = session_data
     
-    await update_session_prompt("testuser", "123", "New Prompt")
+    await update_session_settings("testuser", "123", "New Prompt", True)
     
     handle = mock_file()
     written_data = "".join([call.args[0] for call in handle.write.call_args_list])
     loaded_data = json.loads(written_data)
     
     assert loaded_data["system_prompt"] == "New Prompt"
+    assert loaded_data["include_gps"] is True
 
 @patch('builtins.open', new_callable=mock_open)
 @patch('app.storage.os.path.exists')
@@ -292,7 +297,8 @@ async def test_session_json_schema(mock_file, mock_uuid, mock_exists):
         "title": str,
         "created_at": str,
         "history": list,
-        "system_prompt": str
+        "system_prompt": str,
+        "include_gps": bool
     }
     
     # 1. Prüfe, ob alle erwarteten Keys vorhanden sind und den richtigen Typ haben

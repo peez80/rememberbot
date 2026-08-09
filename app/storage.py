@@ -61,7 +61,8 @@ def _sync_create_session(username: str, title: str) -> str:
         "title": title,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "history": [],
-        "system_prompt": ""
+        "system_prompt": "",
+        "include_gps": False
     }
     
     with open(filepath, "w", encoding="utf-8") as f:
@@ -177,23 +178,26 @@ async def delete_session(username: str, session_id: str):
     async with session_locks[session_id]:
         await asyncio.to_thread(_sync_delete_session, username, session_id)
 
-def _sync_get_session_prompt(username: str, session_id: str) -> str:
+def _sync_get_session_settings(username: str, session_id: str) -> dict:
     filepath = get_session_filepath(username, session_id)
     if not os.path.exists(filepath):
-        return ""
+        return {"prompt": "", "include_gps": False}
         
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             data = json.load(f)
-            return data.get("system_prompt", "")
+            return {
+                "prompt": data.get("system_prompt", ""),
+                "include_gps": data.get("include_gps", False)
+            }
     except Exception:
-        return ""
+        return {"prompt": "", "include_gps": False}
 
-async def get_session_prompt(username: str, session_id: str) -> str:
+async def get_session_settings(username: str, session_id: str) -> dict:
     async with session_locks[session_id]:
-        return await asyncio.to_thread(_sync_get_session_prompt, username, session_id)
+        return await asyncio.to_thread(_sync_get_session_settings, username, session_id)
 
-def _sync_update_session_prompt(username: str, session_id: str, prompt: str):
+def _sync_update_session_settings(username: str, session_id: str, prompt: str, include_gps: bool):
     filepath = get_session_filepath(username, session_id)
     if not os.path.exists(filepath):
         return
@@ -203,15 +207,16 @@ def _sync_update_session_prompt(username: str, session_id: str, prompt: str):
             data = json.load(f)
             
         data["system_prompt"] = prompt
+        data["include_gps"] = include_gps
         
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
     except Exception:
         pass
 
-async def update_session_prompt(username: str, session_id: str, prompt: str):
+async def update_session_settings(username: str, session_id: str, prompt: str, include_gps: bool):
     async with session_locks[session_id]:
-        await asyncio.to_thread(_sync_update_session_prompt, username, session_id, prompt)
+        await asyncio.to_thread(_sync_update_session_settings, username, session_id, prompt, include_gps)
 
 def _sync_cleanup_deleted_sessions(username: str, days: int = 30):
     user_dir = os.path.join(DATA_DIR, username)

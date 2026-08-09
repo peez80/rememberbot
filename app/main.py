@@ -25,7 +25,7 @@ from .storage import (
     init_storage, DATA_DIR,
     create_session, get_sessions, get_session_history,
     save_session_message, update_session_title, delete_session,
-    get_session_prompt, update_session_prompt, init_user_storage,
+    get_session_settings, update_session_settings, init_user_storage,
     get_session_icon_path, get_session_icon_target_path,
     cleanup_deleted_sessions
 )
@@ -195,27 +195,28 @@ async def delete_session_endpoint(session_id: str, username: str = Depends(get_c
     await delete_session(username, session_id)
     return {"success": True}
 
-class SystemPromptRequest(BaseModel):
+class SessionSettingsRequest(BaseModel):
     prompt: str
+    include_gps: bool = False
 
-@app.get("/api/sessions/{session_id}/prompt")
-async def get_prompt_endpoint(session_id: str, username: str = Depends(get_current_user)):
+@app.get("/api/sessions/{session_id}/settings")
+async def get_settings_endpoint(session_id: str, username: str = Depends(get_current_user)):
     sessions = await get_sessions(username)
     session_metadata = next((s for s in sessions if s["id"] == session_id), None)
     if not session_metadata:
         raise HTTPException(status_code=404, detail="Session not found")
         
-    prompt = await get_session_prompt(username, session_id)
-    return {"prompt": prompt}
+    settings = await get_session_settings(username, session_id)
+    return settings
 
-@app.put("/api/sessions/{session_id}/prompt")
-async def update_prompt_endpoint(session_id: str, req: SystemPromptRequest, username: str = Depends(get_current_user)):
+@app.put("/api/sessions/{session_id}/settings")
+async def update_settings_endpoint(session_id: str, req: SessionSettingsRequest, username: str = Depends(get_current_user)):
     sessions = await get_sessions(username)
     session_metadata = next((s for s in sessions if s["id"] == session_id), None)
     if not session_metadata:
         raise HTTPException(status_code=404, detail="Session not found")
         
-    await update_session_prompt(username, session_id, req.prompt)
+    await update_session_settings(username, session_id, req.prompt, req.include_gps)
     return {"success": True}
 
 class SessionTitleRequest(BaseModel):
@@ -237,6 +238,7 @@ async def update_title_endpoint(session_id: str, req: SessionTitleRequest, usern
 async def chat_endpoint(
     session_id: str,
     message: str = Form(""),
+    location: str = Form(""),
     images: List[UploadFile] = File([]),
     username: str = Depends(get_current_user)
 ):
@@ -287,6 +289,9 @@ async def chat_endpoint(
             display_msg = f"[{len(valid_images)} Bild(er) gesendet]"
         else:
             display_msg += f" [{len(valid_images)} Bild(er) angehängt]"
+
+    if location:
+        display_msg += f"\n\n[GPS: {location}]"
             
     async def process_and_save():
         # Auto-rename if this is the first message and title is default
@@ -312,7 +317,8 @@ async def chat_endpoint(
         user_data_dir = os.path.abspath(os.path.join(DATA_DIR, username, "sessions", session_id, "data"))
         os.makedirs(user_data_dir, exist_ok=True)
         
-        session_prompt = await get_session_prompt(username, session_id)
+        session_settings = await get_session_settings(username, session_id)
+        session_prompt = session_settings.get("prompt", "")
         
         technical_prompt = (
             f"TECHNISCHE VORAUSSETZUNG: Dein persistentes Datenverzeichnis lautet: {user_data_dir}\n"
@@ -321,6 +327,9 @@ async def chat_endpoint(
             "Erstelle für alle generierten Dateien einen Markdown-Link in der Antwort. "
             "Nutze als Link-Ziel AUSSCHLIESSLICH den reinen Dateinamen ohne Pfade, z.B. [Dateiname.pdf](Dateiname.pdf)."
         )
+        if location:
+            technical_prompt += f"\n\nHINWEIS: Der Nutzer befindet sich aktuell hier (GPS): {location}"
+        
         combined_prompt = f"{technical_prompt}\n\n{session_prompt}" if session_prompt else technical_prompt
         
         parsed_response = await agy_client.process_message(

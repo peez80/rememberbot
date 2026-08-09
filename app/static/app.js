@@ -34,11 +34,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const systemPromptModal = document.getElementById("system-prompt-modal");
     const systemPromptForm = document.getElementById("system-prompt-form");
     const systemPromptInput = document.getElementById("system-prompt-input");
+    const gpsSettingInput = document.getElementById("gps-setting-input");
     const closePromptBtn = document.getElementById("close-prompt-btn");
     const savePromptBtn = document.getElementById("save-prompt-btn");
 
     let selectedImageFiles = [];
     let currentSessionId = localStorage.getItem("currentSessionId");
+    let currentSessionGpsEnabled = false;
 
     const scrollToBottomBtn = document.getElementById("scroll-to-bottom-btn");
 
@@ -328,12 +330,16 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         try {
-            // Fetch system prompt
-            const promptRes = await fetch(`/api/sessions/${sessionId}/prompt`);
+            // Fetch system prompt and settings
+            const promptRes = await fetch(`/api/sessions/${sessionId}/settings`);
             if (promptRes.ok) {
                 const promptData = await promptRes.json();
                 if (currentSessionId === sessionId) {
                     systemPromptInput.value = promptData.prompt || "";
+                    currentSessionGpsEnabled = promptData.include_gps || false;
+                    if (gpsSettingInput) {
+                        gpsSettingInput.checked = currentSessionGpsEnabled;
+                    }
                 }
             }
 
@@ -490,13 +496,57 @@ document.addEventListener("DOMContentLoaded", () => {
         const text = messageInput.value.trim();
         if (!text && selectedImageFiles.length === 0) return;
 
-        // Display user message
-        let displayMsg = text;
+        // Hide warning and show UI feedback immediately
+        contextWarning.style.display = "none";
+        
+        // Grab local urls before we clear selectedImageFiles
         let localImageUrls = [];
         if (selectedImageFiles.length > 0) {
-            displayMsg += displayMsg ? ` [${selectedImageFiles.length} Bild(er) angehängt]` : `[${selectedImageFiles.length} Bild(er) gesendet]`;
             localImageUrls = selectedImageFiles.map(f => URL.createObjectURL(f));
         }
+
+        const filesToUpload = [...selectedImageFiles];
+
+        // Reset input immediately for responsiveness
+        messageInput.value = "";
+        messageInput.style.height = "auto";
+        messageInput.style.overflowY = "hidden";
+        selectedImageFiles = [];
+        updatePreviewUI();
+
+        // Show typing indicator while we possibly fetch GPS
+        showTypingIndicator();
+
+        const submittedSessionId = currentSessionId;
+        
+        let locationStr = "";
+        if (currentSessionGpsEnabled) {
+            try {
+                const position = await new Promise((resolve, reject) => {
+                    navigator.geolocation.getCurrentPosition(resolve, reject, {
+                        enableHighAccuracy: true,
+                        timeout: 30000,
+                        maximumAge: 0
+                    });
+                });
+                locationStr = `Lat: ${position.coords.latitude}, Lon: ${position.coords.longitude}`;
+            } catch (err) {
+                console.warn("GPS failed", err);
+                locationStr = "Standort konnte nicht ermittelt werden.";
+            }
+        }
+
+        // Build display message
+        let displayMsg = text;
+        if (filesToUpload.length > 0) {
+            displayMsg += displayMsg ? ` [${filesToUpload.length} Bild(er) angehängt]` : `[${filesToUpload.length} Bild(er) gesendet]`;
+        }
+        if (locationStr) {
+            displayMsg += `\n\n[GPS: ${locationStr}]`;
+        }
+
+        // Remove the early typing indicator so we can append the user message
+        removeTypingIndicator();
 
         // Remove initial greeting if it's the first message
         if (chatContainer.children.length === 1 && chatContainer.firstElementChild.innerText.includes("Hallo! Was hast du heute gegessen")) {
@@ -509,21 +559,15 @@ document.addEventListener("DOMContentLoaded", () => {
         // Prepare form data
         const formData = new FormData();
         formData.append("message", text);
-        selectedImageFiles.forEach(file => {
+        filesToUpload.forEach(file => {
             formData.append("images", file);
         });
+        if (locationStr) {
+            formData.append("location", locationStr);
+        }
 
-        // Reset input
-        messageInput.value = "";
-        messageInput.style.height = "auto";
-        messageInput.style.overflowY = "hidden";
-        selectedImageFiles = [];
-        updatePreviewUI();
-
+        // Show typing indicator again for the actual API request
         showTypingIndicator();
-        contextWarning.style.display = "none";
-
-        const submittedSessionId = currentSessionId;
 
         try {
             const response = await fetch(`/api/sessions/${submittedSessionId}/chat`, {
@@ -575,15 +619,16 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!currentSessionId) return;
 
         const promptText = systemPromptInput.value.trim();
+        const includeGps = gpsSettingInput ? gpsSettingInput.checked : false;
         const titleText = document.getElementById("chat-title-input").value.trim();
         savePromptBtn.disabled = true;
         savePromptBtn.textContent = "Wird gespeichert...";
 
         try {
-            const promptRes = fetch(`/api/sessions/${currentSessionId}/prompt`, {
+            const promptRes = fetch(`/api/sessions/${currentSessionId}/settings`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ prompt: promptText })
+                body: JSON.stringify({ prompt: promptText, include_gps: includeGps })
             });
 
             const session = window.lastSessions?.find(s => s.id === currentSessionId);
@@ -600,6 +645,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const allOk = responses.every(res => res.ok);
 
             if (allOk) {
+                currentSessionGpsEnabled = includeGps;
                 systemPromptModal.style.display = "none";
                 if (titleRes) {
                     await loadSessions();
