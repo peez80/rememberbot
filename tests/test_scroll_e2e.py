@@ -136,7 +136,7 @@ async def test_image_loading_preserves_scroll_position_e2e():
                 "timestamp": "2026-01-01T00:01:00Z"
             })
 
-        await page.route("**/api/sessions/sess-1/prompt", lambda route: route.fulfill(
+        await page.route("**/api/sessions/sess-1/settings", lambda route: route.fulfill(
             status=200,
             content_type="application/json",
             body='{"prompt": ""}'

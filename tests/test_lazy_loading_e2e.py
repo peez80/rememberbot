@@ -54,7 +54,7 @@ async def test_chat_images_have_lazy_loading_attributes_e2e():
             }
         ]
 
-        await page.route("**/api/sessions/sess-lazy-1/prompt", lambda route: route.fulfill(
+        await page.route("**/api/sessions/sess-lazy-1/settings", lambda route: route.fulfill(
             status=200,
             content_type="application/json",
             body='{"prompt": ""}'
