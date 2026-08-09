@@ -541,9 +541,6 @@ document.addEventListener("DOMContentLoaded", () => {
         if (filesToUpload.length > 0) {
             displayMsg += displayMsg ? ` [${filesToUpload.length} Bild(er) angehängt]` : `[${filesToUpload.length} Bild(er) gesendet]`;
         }
-        if (locationStr) {
-            displayMsg += `\n\n[GPS: ${locationStr}]`;
-        }
 
         // Remove the early typing indicator so we can append the user message
         removeTypingIndicator();

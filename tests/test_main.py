@@ -286,6 +286,10 @@ async def test_chat_endpoint_with_location(mock_get_settings, mock_update_title,
     # Verify messages saved
     assert mock_save_msg.call_count == 2
     user_msg_call = mock_save_msg.call_args_list[0][0][2]
-    # Check that location was appended to text
+    # Check that location is NOT appended to user's text anymore
     assert "Wo bin ich?" in user_msg_call["text"]
-    assert "[GPS: Lat: 48.0, Lon: 11.0]" in user_msg_call["text"]
+    assert "Lat: 48.0, Lon: 11.0" not in user_msg_call["text"]
+    
+    # Check that location was sent to system_prompt
+    call_kwargs = mock_agy_client.process_message.call_args.kwargs
+    assert "Lat: 48.0, Lon: 11.0" in call_kwargs["system_prompt"]

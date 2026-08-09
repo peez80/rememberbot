@@ -289,9 +289,6 @@ async def chat_endpoint(
             display_msg = f"[{len(valid_images)} Bild(er) gesendet]"
         else:
             display_msg += f" [{len(valid_images)} Bild(er) angehängt]"
-
-    if location:
-        display_msg += f"\n\n[GPS: {location}]"
             
     async def process_and_save():
         # Auto-rename if this is the first message and title is default
