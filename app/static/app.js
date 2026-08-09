@@ -524,9 +524,9 @@ document.addEventListener("DOMContentLoaded", () => {
             try {
                 const position = await new Promise((resolve, reject) => {
                     navigator.geolocation.getCurrentPosition(resolve, reject, {
-                        enableHighAccuracy: true,
-                        timeout: 30000,
-                        maximumAge: 0
+                        enableHighAccuracy: false, // Better compatibility on Android if true isn't strictly needed
+                        timeout: 10000, // 10s max wait time
+                        maximumAge: 60000 // allow up to 1-minute old cached location
                     });
                 });
                 locationStr = `Lat: ${position.coords.latitude}, Lon: ${position.coords.longitude}`;
