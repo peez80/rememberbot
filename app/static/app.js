@@ -761,6 +761,13 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    // Reload session on visibility change to recover from suspended state disconnects
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible" && currentSessionId) {
+            selectSession(currentSessionId);
+        }
+    });
+
     // Init
     checkAuthStatus();
 });
