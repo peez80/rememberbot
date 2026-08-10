@@ -92,8 +92,9 @@ def get_current_user(request: Request) -> str:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return ACTIVE_SESSIONS[session_token]
 
-# --- Background Task Helper ---
+# --- Background Task Helper & Active Chat State ---
 _active_tasks = set()
+_active_chat_sessions = set()
 
 def fire_and_forget(coro):
     task = asyncio.create_task(coro)
@@ -162,8 +163,18 @@ async def get_sessions_endpoint(username: str = Depends(get_current_user)):
     fire_and_forget(cleanup_deleted_sessions(username))
     return await get_sessions(username)
 
+@app.get("/api/sessions/{session_id}/status")
+async def get_session_status_endpoint(session_id: str, username: str = Depends(get_current_user)):
+    sessions = await get_sessions(username)
+    session_metadata = next((s for s in sessions if s["id"] == session_id), None)
+    if not session_metadata:
+        raise HTTPException(status_code=404, detail="Session not found")
+        
+    is_processing = (username, session_id) in _active_chat_sessions
+    return {"id": session_id, "is_processing": is_processing}
+
 @app.get("/api/sessions/{session_id}/history", response_model=List[ChatMessage])
-async def get_history_endpoint(session_id: str, username: str = Depends(get_current_user)):
+async def get_history_endpoint(session_id: str, response: Response, username: str = Depends(get_current_user)):
     sessions = await get_sessions(username)
     session_metadata = next((s for s in sessions if s["id"] == session_id), None)
     if not session_metadata:
@@ -176,6 +187,9 @@ async def get_history_endpoint(session_id: str, username: str = Depends(get_curr
         if session_metadata and session_metadata.get("title") != "Neuer Chat":
             target_path = get_session_icon_target_path(username, session_id)
             fire_and_forget(agy_client.generate_chat_icon(session_metadata["title"], target_path))
+            
+    is_processing = (username, session_id) in _active_chat_sessions
+    response.headers["X-Is-Processing"] = "true" if is_processing else "false"
     return history
 
 @app.get("/api/sessions/{session_id}/icon")
@@ -291,101 +305,106 @@ async def chat_endpoint(
             display_msg += f" [{len(valid_images)} Bild(er) angehängt]"
             
     async def process_and_save():
-        # Auto-rename if this is the first message and title is default
-        history = await get_session_history(username, session_id)
-        if not history and session_metadata.get("title") == "Neuer Chat" and message:
-            # Use first 30 chars
-            new_title = (message[:27] + "...") if len(message) > 30 else message
-            await update_session_title(username, session_id, new_title)
-            target_path = get_session_icon_target_path(username, session_id)
-            fire_and_forget(agy_client.generate_chat_icon(new_title, target_path))
+        session_key = (username, session_id)
+        _active_chat_sessions.add(session_key)
+        try:
+            # Auto-rename if this is the first message and title is default
+            history = await get_session_history(username, session_id)
+            if not history and session_metadata.get("title") == "Neuer Chat" and message:
+                # Use first 30 chars
+                new_title = (message[:27] + "...") if len(message) > 30 else message
+                await update_session_title(username, session_id, new_title)
+                target_path = get_session_icon_target_path(username, session_id)
+                fire_and_forget(agy_client.generate_chat_icon(new_title, target_path))
 
-        # Save the user's message to history
-        user_msg_data = {
-            "text": display_msg, 
-            "is_user": True,
-            "image_urls": image_urls,
-            "images": images_data if images_data else None,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
-        await save_session_message(username, session_id, user_msg_data)
+            # Save the user's message to history
+            user_msg_data = {
+                "text": display_msg, 
+                "is_user": True,
+                "image_urls": image_urls,
+                "images": images_data if images_data else None,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            await save_session_message(username, session_id, user_msg_data)
 
-        # Process via agy with FULL context
-        user_data_dir = os.path.abspath(os.path.join(DATA_DIR, username, "sessions", session_id, "data"))
-        os.makedirs(user_data_dir, exist_ok=True)
-        
-        session_settings = await get_session_settings(username, session_id)
-        session_prompt = session_settings.get("prompt", "")
-        
-        technical_prompt = (
-            f"TECHNISCHE VORAUSSETZUNG: Dein persistentes Datenverzeichnis lautet: {user_data_dir}\n"
-            "Speichere und lese generierte Dateien IMMER in diesem absoluten Verzeichnis. "
-            "Verwende in generierten Skripten (z.B. Python) zwingend diesen absoluten Pfad. "
-            "Erstelle für alle generierten Dateien einen Markdown-Link in der Antwort. "
-            "Nutze als Link-Ziel AUSSCHLIESSLICH den reinen Dateinamen ohne Pfade, z.B. [Dateiname.pdf](Dateiname.pdf)."
-        )
-        if location:
-            technical_prompt += f"\n\nHINWEIS: Der Nutzer befindet sich aktuell hier (GPS): {location}"
-        
-        combined_prompt = f"{technical_prompt}\n\n{session_prompt}" if session_prompt else technical_prompt
-        
-        parsed_response = await agy_client.process_message(
-            context_messages=history, 
-            new_message=message, 
-            image_paths=image_paths, 
-            system_prompt=combined_prompt,
-            cwd=user_data_dir
-        )
+            # Process via agy with FULL context
+            user_data_dir = os.path.abspath(os.path.join(DATA_DIR, username, "sessions", session_id, "data"))
+            os.makedirs(user_data_dir, exist_ok=True)
             
-        ai_reply = parsed_response.get("reply", "Entschuldigung, ich habe das nicht verstanden.")
-        context_truncated = parsed_response.get("context_truncated", False)
-        
-        # --- Fix local file links ---
-        def replace_local_links(match):
-            text = match.group(1)
-            href = match.group(2)
+            session_settings = await get_session_settings(username, session_id)
+            session_prompt = session_settings.get("prompt", "")
             
-            # Bereinige file:// Präfixe
-            if href.startswith("file://"):
-                href = href[7:]
-                
-            data_prefix = f"/app/data/{username}/sessions/{session_id}/data/"
-            uploads_prefix = f"/app/data/{username}/sessions/{session_id}/uploads/"
+            technical_prompt = (
+                f"TECHNISCHE VORAUSSETZUNG: Dein persistentes Datenverzeichnis lautet: {user_data_dir}\n"
+                "Speichere und lese generierte Dateien IMMER in diesem absoluten Verzeichnis. "
+                "Verwende in generierten Skripten (z.B. Python) zwingend diesen absoluten Pfad. "
+                "Erstelle für alle generierten Dateien einen Markdown-Link in der Antwort. "
+                "Nutze als Link-Ziel AUSSCHLIESSLICH den reinen Dateinamen ohne Pfade, z.B. [Dateiname.pdf](Dateiname.pdf)."
+            )
+            if location:
+                technical_prompt += f"\n\nHINWEIS: Der Nutzer befindet sich aktuell hier (GPS): {location}"
             
-            # Korrigiere KI-generierte absolute Pfade in die korrekten API-Download-Routen
-            if href.startswith(data_prefix):
-                rel_path = href[len(data_prefix):]
-                encoded = urllib.parse.quote(rel_path, safe='/')
-                return f"[{text}](/app/data/{username}/{session_id}/data/{encoded})"
+            combined_prompt = f"{technical_prompt}\n\n{session_prompt}" if session_prompt else technical_prompt
+            
+            parsed_response = await agy_client.process_message(
+                context_messages=history, 
+                new_message=message, 
+                image_paths=image_paths, 
+                system_prompt=combined_prompt,
+                cwd=user_data_dir
+            )
                 
-            if href.startswith(uploads_prefix):
-                rel_path = href[len(uploads_prefix):]
-                encoded = urllib.parse.quote(rel_path, safe='/')
-                return f"[{text}](/uploads/{session_id}/{encoded})"
+            ai_reply = parsed_response.get("reply", "Entschuldigung, ich habe das nicht verstanden.")
+            context_truncated = parsed_response.get("context_truncated", False)
+            
+            # --- Fix local file links ---
+            def replace_local_links(match):
+                text = match.group(1)
+                href = match.group(2)
                 
-            # Wenn die KI (korrekterweise) nur den Dateinamen zurückgibt
-            if not href.startswith(("http", "/", "data:", "#", "mailto:")):
-                encoded = urllib.parse.quote(href, safe='/')
-                return f"[{text}](/app/data/{username}/{session_id}/data/{encoded})"
+                # Bereinige file:// Präfixe
+                if href.startswith("file://"):
+                    href = href[7:]
+                    
+                data_prefix = f"/app/data/{username}/sessions/{session_id}/data/"
+                uploads_prefix = f"/app/data/{username}/sessions/{session_id}/uploads/"
                 
-            return match.group(0)
+                # Korrigiere KI-generierte absolute Pfade in die korrekten API-Download-Routen
+                if href.startswith(data_prefix):
+                    rel_path = href[len(data_prefix):]
+                    encoded = urllib.parse.quote(rel_path, safe='/')
+                    return f"[{text}](/app/data/{username}/{session_id}/data/{encoded})"
+                    
+                if href.startswith(uploads_prefix):
+                    rel_path = href[len(uploads_prefix):]
+                    encoded = urllib.parse.quote(rel_path, safe='/')
+                    return f"[{text}](/uploads/{session_id}/{encoded})"
+                    
+                # Wenn die KI (korrekterweise) nur den Dateinamen zurückgibt
+                if not href.startswith(("http", "/", "data:", "#", "mailto:")):
+                    encoded = urllib.parse.quote(href, safe='/')
+                    return f"[{text}](/app/data/{username}/{session_id}/data/{encoded})"
+                    
+                return match.group(0)
 
-        ai_reply = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', replace_local_links, ai_reply)
-        # --- End fix ---
+            ai_reply = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', replace_local_links, ai_reply)
+            # --- End fix ---
 
-        # Append AI reply to history
-        ai_msg_data = {
-            "text": ai_reply, 
-            "is_user": False,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
-        await save_session_message(username, session_id, ai_msg_data)
-        
-        return {
-            "reply": ai_reply, 
-            "context_truncated": context_truncated,
-            "timestamp": ai_msg_data["timestamp"]
-        }
+            # Append AI reply to history
+            ai_msg_data = {
+                "text": ai_reply, 
+                "is_user": False,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            await save_session_message(username, session_id, ai_msg_data)
+            
+            return {
+                "reply": ai_reply, 
+                "context_truncated": context_truncated,
+                "timestamp": ai_msg_data["timestamp"]
+            }
+        finally:
+            _active_chat_sessions.discard(session_key)
 
     # Shield the entire AI processing and saving pipeline against connection drops
     task = asyncio.create_task(process_and_save())

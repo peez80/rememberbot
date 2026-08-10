@@ -22,15 +22,13 @@ def run_around_tests():
     yield
     clear_mock_auth()
 
-@pytest.mark.asyncio
-async def test_index_route(tmp_path):
+def test_index_route(tmp_path):
     with patch("builtins.open", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock(read=lambda: "<html>Mock</html>"))))):
         response = client.get("/")
         assert response.status_code == 200
         assert "Mock" in response.text
 
-@pytest.mark.asyncio
-async def test_unauthenticated_access():
+def test_unauthenticated_access():
     assert client.post("/api/sessions").status_code == 401
     assert client.get("/api/sessions").status_code == 401
     assert client.get("/api/sessions/123/history").status_code == 401
@@ -41,8 +39,7 @@ async def test_unauthenticated_access():
     assert client.get("/uploads/123/test.jpg").status_code == 401
 
 @patch("app.main.create_session")
-@pytest.mark.asyncio
-async def test_create_session_endpoint(mock_create):
+def test_create_session_endpoint(mock_create):
     mock_auth()
     mock_create.return_value = "sess-123"
     response = client.post("/api/sessions")
@@ -53,8 +50,7 @@ async def test_create_session_endpoint(mock_create):
 @patch("app.main.cleanup_deleted_sessions")
 @patch("app.main.fire_and_forget")
 @patch("app.main.get_sessions")
-@pytest.mark.asyncio
-async def test_get_sessions_endpoint(mock_get, mock_fire, mock_cleanup):
+def test_get_sessions_endpoint(mock_get, mock_fire, mock_cleanup):
     mock_auth()
     mock_get.return_value = [{"id": "1", "title": "Chat 1"}]
     response = client.get("/api/sessions")
@@ -66,8 +62,7 @@ async def test_get_sessions_endpoint(mock_get, mock_fire, mock_cleanup):
 
 @patch("app.main.get_sessions")
 @patch("app.main.get_session_history")
-@pytest.mark.asyncio
-async def test_get_history_endpoint(mock_history, mock_get_sessions):
+def test_get_history_endpoint(mock_history, mock_get_sessions):
     mock_auth()
     mock_get_sessions.return_value = [{"id": "sess-123", "title": "Test"}]
     mock_history.return_value = [{"text": "Hi", "is_user": True, "image_urls": [], "images": None, "timestamp": None}]
@@ -82,8 +77,7 @@ async def test_get_history_endpoint(mock_history, mock_get_sessions):
 @patch("app.main.get_sessions")
 @patch("app.main.update_session_title")
 @patch("app.main.get_session_settings")
-@pytest.mark.asyncio
-async def test_chat_endpoint_text_only(mock_get_settings, mock_update_title, mock_get_sessions, mock_save_msg, mock_get_history, mock_agy_client):
+def test_chat_endpoint_text_only(mock_get_settings, mock_update_title, mock_get_sessions, mock_save_msg, mock_get_history, mock_agy_client):
     mock_auth()
     mock_get_history.return_value = []
     mock_get_settings.return_value = {"prompt": "Test prompt", "include_gps": False}
@@ -126,8 +120,7 @@ async def test_chat_endpoint_text_only(mock_get_settings, mock_update_title, moc
 @patch("app.main.get_sessions")
 @patch("app.main.update_session_title")
 @patch("app.main.get_session_settings")
-@pytest.mark.asyncio
-async def test_chat_endpoint_with_image(mock_get_settings, mock_update_title, mock_get_sessions, mock_save_msg, mock_get_history, mock_agy_client):
+def test_chat_endpoint_with_image(mock_get_settings, mock_update_title, mock_get_sessions, mock_save_msg, mock_get_history, mock_agy_client):
     mock_auth()
     mock_get_history.return_value = []
     mock_get_settings.return_value = {"prompt": "Test prompt", "include_gps": False}
@@ -170,8 +163,7 @@ async def test_chat_endpoint_with_image(mock_get_settings, mock_update_title, mo
 
 @patch("app.main.delete_session")
 @patch("app.main.get_sessions")
-@pytest.mark.asyncio
-async def test_delete_session_endpoint(mock_get_sessions, mock_delete_session):
+def test_delete_session_endpoint(mock_get_sessions, mock_delete_session):
     mock_auth()
     mock_get_sessions.return_value = [{"id": "sess-123", "title": "Test"}]
     
@@ -186,8 +178,7 @@ async def test_delete_session_endpoint(mock_get_sessions, mock_delete_session):
 
 @patch("app.main.get_sessions")
 @patch("app.main.get_session_settings")
-@pytest.mark.asyncio
-async def test_get_settings_endpoint(mock_get_settings, mock_get_sessions):
+def test_get_settings_endpoint(mock_get_settings, mock_get_sessions):
     mock_auth()
     mock_get_sessions.return_value = [{"id": "sess-123", "title": "Test"}]
     mock_get_settings.return_value = {"prompt": "Test prompt", "include_gps": True}
@@ -198,8 +189,7 @@ async def test_get_settings_endpoint(mock_get_settings, mock_get_sessions):
 
 @patch("app.main.get_sessions")
 @patch("app.main.update_session_settings")
-@pytest.mark.asyncio
-async def test_update_settings_endpoint(mock_update_settings, mock_get_sessions):
+def test_update_settings_endpoint(mock_update_settings, mock_get_sessions):
     mock_auth()
     mock_get_sessions.return_value = [{"id": "sess-123", "title": "Test"}]
     response = client.put("/api/sessions/sess-123/settings", json={"prompt": "New prompt", "include_gps": True})
@@ -208,8 +198,7 @@ async def test_update_settings_endpoint(mock_update_settings, mock_get_sessions)
     mock_update_settings.assert_called_once_with("testuser", "sess-123", "New prompt", True)
 
 @patch("app.main.os.path.exists")
-@pytest.mark.asyncio
-async def test_uploads_endpoint(mock_exists):
+def test_uploads_endpoint(mock_exists):
     mock_auth()
     mock_exists.return_value = True
     with patch("app.main.FileResponse") as mock_fileresponse:
@@ -224,8 +213,7 @@ async def test_uploads_endpoint(mock_exists):
 @patch("app.main.update_session_title")
 @patch("app.main.get_sessions")
 @patch("app.main.agy_client")
-@pytest.mark.asyncio
-async def test_update_title_endpoint(mock_agy_client, mock_get_sessions, mock_update_title):
+def test_update_title_endpoint(mock_agy_client, mock_get_sessions, mock_update_title):
     mock_auth()
     
     async def mock_generate_icon(*args, **kwargs):
@@ -241,8 +229,7 @@ async def test_update_title_endpoint(mock_agy_client, mock_get_sessions, mock_up
     mock_update_title.assert_called_once_with("testuser", "sess-123", "New Title")
 
 @patch("app.main.get_sessions")
-@pytest.mark.asyncio
-async def test_update_title_endpoint_not_found(mock_get_sessions):
+def test_update_title_endpoint_not_found(mock_get_sessions):
     mock_auth()
     mock_get_sessions.return_value = [{"id": "sess-456", "title": "Old Title"}]
     
@@ -255,8 +242,7 @@ async def test_update_title_endpoint_not_found(mock_get_sessions):
 @patch("app.main.get_sessions")
 @patch("app.main.update_session_title")
 @patch("app.main.get_session_settings")
-@pytest.mark.asyncio
-async def test_chat_endpoint_with_location(mock_get_settings, mock_update_title, mock_get_sessions, mock_save_msg, mock_get_history, mock_agy_client):
+def test_chat_endpoint_with_location(mock_get_settings, mock_update_title, mock_get_sessions, mock_save_msg, mock_get_history, mock_agy_client):
     mock_auth()
     mock_get_history.return_value = []
     mock_get_settings.return_value = {"prompt": "", "include_gps": True}

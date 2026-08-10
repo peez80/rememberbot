@@ -268,7 +268,15 @@ class AgyClient:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            stdout_bytes, _ = await process.communicate()
+            try:
+                stdout_bytes, _ = await asyncio.wait_for(process.communicate(), timeout=5.0)
+            except asyncio.TimeoutError:
+                process.kill()
+                stdout_bytes, _ = await process.communicate()
+                logger.warning("agy icon generation timed out after 5s, using fallback.")
+                write_fallback()
+                return
+
             if process.returncode == 0:
                 output = stdout_bytes.decode('utf-8', errors='replace').strip()
                 match = re.search(r'(<svg.*?</svg>)', output, re.DOTALL | re.IGNORECASE)

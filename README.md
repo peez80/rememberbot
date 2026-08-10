@@ -100,15 +100,15 @@ docker-compose run --rm web pytest tests/
 
 This will run all tests (both unit tests and Playwright E2E browser tests) together:
 - Local storage logic (`tests/test_storage.py`)
-- API endpoints and chat behavior (`tests/test_main.py`)
+- API endpoints and chat behavior (`tests/test_main.py`, `tests/test_thinking_status.py`)
 - `agy` CLI interaction and JSON parsing (`tests/test_agy_client.py`)
 - UI component static asset integrity (`tests/test_scroll_button.py`)
-- End-to-End browser UI interactions via Playwright (`tests/test_scroll_e2e.py`)
+- End-to-End browser UI interactions and thinking indicator sync via Playwright (`tests/test_scroll_e2e.py`, `tests/test_thinking_animation_e2e.py`, `tests/test_visibility_sync_e2e.py`)
 
 To run only the Playwright E2E browser tests:
 
 ```bash
-docker-compose run --rm web pytest tests/test_scroll_e2e.py
+docker-compose run --rm web pytest tests/test_scroll_e2e.py tests/test_thinking_animation_e2e.py tests/test_visibility_sync_e2e.py
 ```
 
 

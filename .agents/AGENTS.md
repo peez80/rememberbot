@@ -17,6 +17,7 @@ Diese Datei enthält projektspezifische Verhaltensregeln und Standard-Anweisunge
   1. **Red:** Schreibe oder aktualisiere zuerst die Tests, bevor du Implementierungsänderungen vornimmst. Führe die Tests aus und stelle sicher, dass sie fehlschlagen.
   2. **Green:** Implementiere den minimale Code-Menge, um die Tests erfolgreich passieren zu lassen. Führe die Tests erneut aus.
   3. **Refactor:** Räume den Code bei Bedarf auf, während alle Tests weiterhin grün bleiben.
+- **Planungsvorgabe:** Wenn du mit dem `/plan` Befehl einen Implementierungsplan erstellst, strukturiere den Plan (insbesondere die "Proposed Changes") **immer explizit** in die drei TDD-Phasen (Phase 1: Red, Phase 2: Green, Phase 3: Refactor).
 - Wenn neuer Code geschrieben wird, erstelle oder erweitere immer direkt die passenden Unit-Tests im `tests/` Ordner.
 - Test-Framework ist `pytest`.
 

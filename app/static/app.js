@@ -297,6 +297,46 @@ document.addEventListener("DOMContentLoaded", () => {
     imageUpload.addEventListener("change", (e) => handleImageSelection(e, cameraUpload));
     cameraUpload.addEventListener("change", (e) => handleImageSelection(e, imageUpload));
 
+    // --- Polling for Active Background Processing ---
+    const activePollTimers = new Map();
+
+    const stopPollingSession = (sessionId) => {
+        if (activePollTimers.has(sessionId)) {
+            clearInterval(activePollTimers.get(sessionId));
+            activePollTimers.delete(sessionId);
+        }
+    };
+
+    const startPollingSession = (sessionId) => {
+        if (activePollTimers.has(sessionId)) return;
+
+        const timerId = setInterval(async () => {
+            try {
+                const res = await fetch(`/api/sessions/${sessionId}/status`);
+                if (!res.ok) {
+                    stopPollingSession(sessionId);
+                    return;
+                }
+                const data = await res.json();
+                if (!data.is_processing) {
+                    stopPollingSession(sessionId);
+                    if (currentSessionId === sessionId) {
+                        await selectSession(sessionId);
+                    }
+                    const sessionsRes = await fetch("/api/sessions");
+                    if (sessionsRes.ok) {
+                        const sessionsData = await sessionsRes.json();
+                        renderSessionList(sessionsData);
+                    }
+                }
+            } catch (err) {
+                console.error("Polling error for session", sessionId, err);
+            }
+        }, 1000);
+
+        activePollTimers.set(sessionId, timerId);
+    };
+
     // --- Session Management ---
 
     const selectSession = async (sessionId) => {
@@ -344,6 +384,7 @@ document.addEventListener("DOMContentLoaded", () => {
             }
 
             const response = await fetch(`/api/sessions/${sessionId}/history`);
+            const isProcessing = response.headers.get("X-Is-Processing") === "true";
             const history = await response.json();
 
             if (currentSessionId !== sessionId) return;
@@ -354,8 +395,16 @@ document.addEventListener("DOMContentLoaded", () => {
                     appendMessage(msg.text, msg.is_user, msg.images || msg.image_urls || [], msg.timestamp, true, false);
                 });
                 scrollToBottom(false);
-            } else {
+            } else if (!isProcessing) {
                 showInitialGreeting();
+            }
+
+            if (isProcessing) {
+                showTypingIndicator();
+                startPollingSession(sessionId);
+            } else {
+                removeTypingIndicator();
+                stopPollingSession(sessionId);
             }
         } catch (error) {
             console.error("Failed to load history", error);
@@ -565,6 +614,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Show typing indicator again for the actual API request
         showTypingIndicator();
+        startPollingSession(submittedSessionId);
 
         try {
             const response = await fetch(`/api/sessions/${submittedSessionId}/chat`, {
@@ -573,6 +623,7 @@ document.addEventListener("DOMContentLoaded", () => {
             });
             const data = await response.json();
 
+            stopPollingSession(submittedSessionId);
             removeTypingIndicator();
 
             if (currentSessionId !== submittedSessionId) return;
@@ -589,8 +640,11 @@ document.addEventListener("DOMContentLoaded", () => {
             renderSessionList(sessionsData);
 
         } catch (error) {
+            stopPollingSession(submittedSessionId);
             removeTypingIndicator();
-            appendMessage("Es gab einen Verbindungsfehler. Bitte versuche es später noch einmal.", false);
+            if (currentSessionId === submittedSessionId) {
+                appendMessage("Es gab einen Verbindungsfehler. Bitte versuche es später noch einmal.", false);
+            }
             console.error("Error calling chat API", error);
         }
     });
