@@ -11,7 +11,7 @@ from typing import List, Optional
 
 from fastapi import FastAPI, UploadFile, File, Form, Request, Response, HTTPException, Depends
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from pydantic import BaseModel
@@ -251,8 +251,10 @@ async def update_title_endpoint(session_id: str, req: SessionTitleRequest, usern
 @app.post("/api/sessions/{session_id}/chat")
 async def chat_endpoint(
     session_id: str,
+    request: Request,
     message: str = Form(""),
     location: str = Form(""),
+    stream: str = Form("false"),
     images: List[UploadFile] = File([]),
     username: str = Depends(get_current_user)
 ):
@@ -262,8 +264,12 @@ async def chat_endpoint(
     if not session_metadata:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    session_key = (username, session_id)
+    _active_chat_sessions.add(session_key)
+
     valid_images = [img for img in images if img.filename]
     if len(valid_images) > 5:
+        _active_chat_sessions.discard(session_key)
         return JSONResponse(status_code=400, content={"error": "Maximal 5 Bilder erlaubt"})
         
     display_msg = message
@@ -271,42 +277,148 @@ async def chat_endpoint(
     image_urls = []
     images_data = []
     
-    if valid_images:
-        # Ensure uploads dir exists for user
-        user_uploads_dir = os.path.join(DATA_DIR, username, "sessions", session_id, "uploads")
-        os.makedirs(user_uploads_dir, exist_ok=True)
-        
-        for img in valid_images:
-            # Save uploaded image permanently
-            ext = os.path.splitext(img.filename)[1]
-            filename = f"{uuid.uuid4().hex}{ext}"
-            img_path = os.path.join(user_uploads_dir, filename)
+    try:
+        if valid_images:
+            # Ensure uploads dir exists for user
+            user_uploads_dir = os.path.join(DATA_DIR, username, "sessions", session_id, "uploads")
+            os.makedirs(user_uploads_dir, exist_ok=True)
             
-            contents = await img.read()
-            
-            width, height = 0, 0
-            try:
-                with Image.open(io.BytesIO(contents)) as pil_img:
-                    width, height = pil_img.size
-            except Exception as e:
-                logging.warning(f"Could not read image dimensions: {e}")
-
-            with open(img_path, "wb") as f:
-                f.write(contents)
+            for img in valid_images:
+                # Save uploaded image permanently
+                ext = os.path.splitext(img.filename)[1]
+                filename = f"{uuid.uuid4().hex}{ext}"
+                img_path = os.path.join(user_uploads_dir, filename)
                 
-            image_paths.append(img_path)
-            url = f"/uploads/{session_id}/{filename}"
-            image_urls.append(url)
-            images_data.append({"url": url, "width": width, "height": height})
-            
-        if not display_msg:
-            display_msg = f"[{len(valid_images)} Bild(er) gesendet]"
-        else:
-            display_msg += f" [{len(valid_images)} Bild(er) angehängt]"
+                contents = await img.read()
+                
+                width, height = 0, 0
+                try:
+                    with Image.open(io.BytesIO(contents)) as pil_img:
+                        width, height = pil_img.size
+                except Exception as e:
+                    logging.warning(f"Could not read image dimensions: {e}")
+
+                with open(img_path, "wb") as f:
+                    f.write(contents)
+                    
+                image_paths.append(img_path)
+                url = f"/uploads/{session_id}/{filename}"
+                image_urls.append(url)
+                images_data.append({"url": url, "width": width, "height": height})
+                
+            if not display_msg:
+                display_msg = f"[{len(valid_images)} Bild(er) gesendet]"
+            else:
+                display_msg += f" [{len(valid_images)} Bild(er) angehängt]"
+    except Exception:
+        _active_chat_sessions.discard(session_key)
+        raise
+
+    is_stream = stream.lower() == "true" or "text/event-stream" in request.headers.get("accept", "")
+
+    if is_stream:
+        async def sse_generator():
+            try:
+                # Auto-rename if this is the first message and title is default
+                history = await get_session_history(username, session_id)
+                if not history and session_metadata.get("title") == "Neuer Chat" and message:
+                    new_title = (message[:27] + "...") if len(message) > 30 else message
+                    await update_session_title(username, session_id, new_title)
+                    target_path = get_session_icon_target_path(username, session_id)
+                    fire_and_forget(agy_client.generate_chat_icon(new_title, target_path))
+
+                # Save the user's message to history
+                user_msg_data = {
+                    "text": display_msg, 
+                    "is_user": True,
+                    "image_urls": image_urls,
+                    "images": images_data if images_data else None,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+                await save_session_message(username, session_id, user_msg_data)
+
+                user_data_dir = os.path.abspath(os.path.join(DATA_DIR, username, "sessions", session_id, "data"))
+                os.makedirs(user_data_dir, exist_ok=True)
+                
+                session_settings = await get_session_settings(username, session_id)
+                session_prompt = session_settings.get("prompt", "")
+                
+                technical_prompt = (
+                    f"TECHNISCHE VORAUSSETZUNG: Dein persistentes Datenverzeichnis lautet: {user_data_dir}\n"
+                    "Speichere und lese generierte Dateien IMMER in diesem absoluten Verzeichnis. "
+                    "Verwende in generierten Skripten (z.B. Python) zwingend diesen absoluten Pfad. "
+                    "Erstelle für alle generierten Dateien einen Markdown-Link in der Antwort. "
+                    "Nutze als Link-Ziel AUSSCHLIESSLICH den reinen Dateinamen ohne Pfade, z.B. [Dateiname.pdf](Dateiname.pdf)."
+                )
+                if location:
+                    technical_prompt += f"\n\nHINWEIS: Der Nutzer befindet sich aktuell hier (GPS): {location}"
+                
+                combined_prompt = f"{technical_prompt}\n\n{session_prompt}" if session_prompt else technical_prompt
+
+                full_reply = ""
+                context_truncated = False
+
+                async for event in agy_client.stream_message(
+                    context_messages=history, 
+                    new_message=message, 
+                    image_paths=image_paths, 
+                    system_prompt=combined_prompt,
+                    cwd=user_data_dir
+                ):
+                    if event.get("type") == "delta":
+                        text_chunk = event.get("text", "")
+                        full_reply += text_chunk
+                        yield f"data: {json.dumps({'type': 'delta', 'text': text_chunk})}\n\n"
+                    elif event.get("type") == "done":
+                        full_reply = event.get("reply", full_reply)
+                        context_truncated = event.get("context_truncated", False)
+
+                # --- Fix local file links ---
+                def replace_local_links(match):
+                    text = match.group(1)
+                    href = match.group(2)
+                    if href.startswith("file://"):
+                        href = href[7:]
+                    data_prefix = f"/app/data/{username}/sessions/{session_id}/data/"
+                    uploads_prefix = f"/app/data/{username}/sessions/{session_id}/uploads/"
+                    if href.startswith(data_prefix):
+                        rel_path = href[len(data_prefix):]
+                        encoded = urllib.parse.quote(rel_path, safe='/')
+                        return f"[{text}](/app/data/{username}/{session_id}/data/{encoded})"
+                    if href.startswith(uploads_prefix):
+                        rel_path = href[len(uploads_prefix):]
+                        encoded = urllib.parse.quote(rel_path, safe='/')
+                        return f"[{text}](/uploads/{session_id}/{encoded})"
+                    if not href.startswith(("http", "/", "data:", "#", "mailto:")):
+                        encoded = urllib.parse.quote(href, safe='/')
+                        return f"[{text}](/app/data/{username}/{session_id}/data/{encoded})"
+                    return match.group(0)
+
+                full_reply = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', replace_local_links, full_reply)
+
+                # Format thoughts if needed for final history storage
+                def replace_thought(match):
+                    content = match.group(1).strip()
+                    return f"<details class='ai-reasoning'>\n  <summary>Gedankengang der KI</summary>\n  <div class='reasoning-content'>\n{content}\n  </div>\n</details>\n"
+                
+                saved_reply = re.sub(r'<thought>(.*?)</thought>', replace_thought, full_reply, flags=re.DOTALL).strip()
+                if not saved_reply:
+                    saved_reply = full_reply
+
+                ai_msg_data = {
+                    "text": saved_reply, 
+                    "is_user": False,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+                await save_session_message(username, session_id, ai_msg_data)
+
+                yield f"data: {json.dumps({'type': 'done', 'reply': saved_reply, 'context_truncated': context_truncated, 'timestamp': ai_msg_data['timestamp']})}\n\n"
+            finally:
+                _active_chat_sessions.discard(session_key)
+
+        return StreamingResponse(sse_generator(), media_type="text/event-stream")
             
     async def process_and_save():
-        session_key = (username, session_id)
-        _active_chat_sessions.add(session_key)
         try:
             # Auto-rename if this is the first message and title is default
             history = await get_session_history(username, session_id)

@@ -120,14 +120,7 @@ class AgyClient:
                 self._login_process = None
             return False
 
-    async def process_message(self, context_messages: list, new_message: str, image_paths: list = None, system_prompt: str = None, cwd: str = None) -> dict:
-        """
-        Calls the `agy` CLI with the provided context, new message, and optional image.
-        Returns a dictionary containing the AI's response text.
-        """
-        context_truncated = False
-        MAX_CMD_LENGTH = 100000 # 100k chars safe limit for Linux ARG_MAX (often 128KB in Docker)
-        
+    def _build_prompt_and_history(self, context_messages: list, new_message: str, image_paths: list = None, system_prompt: str = None, cwd: str = None):
         prompt = ""
         if system_prompt:
             prompt += f"<system_instructions>\n{system_prompt}\n</system_instructions>\n\n"
@@ -166,8 +159,108 @@ class AgyClient:
         if image_paths:
             prompt += f"\nBitte berücksichtige für die Beantwortung der <current_message> auch diese Bilder: {', '.join(image_paths)}\n"
 
-        cmd = [self.executable_path, "--dangerously-skip-permissions"]
-        cmd.extend(["--prompt", prompt])
+        return prompt, history_file_path
+
+    async def stream_message(self, context_messages: list, new_message: str, image_paths: list = None, system_prompt: str = None, cwd: str = None):
+        """
+        Calls `agy` with `--output-format stream-json` and yields real-time event dictionaries.
+        Yields:
+            {"type": "delta", "text": "..."} for streamed text chunks.
+            {"type": "done", "reply": "...", "context_truncated": bool, "usage": dict} at completion.
+        """
+        prompt, history_file_path = self._build_prompt_and_history(
+            context_messages, new_message, image_paths, system_prompt, cwd
+        )
+
+        cmd = [self.executable_path, "--dangerously-skip-permissions", "--output-format", "stream-json", "--prompt", prompt]
+        
+        log_cmd = cmd.copy()
+        if "--prompt" in log_cmd:
+            log_cmd[log_cmd.index("--prompt") + 1] = "<PROMPT_PLACEHOLDER>"
+        logger.debug(f"Executing agy stream command: {' '.join(log_cmd)}")
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd
+            )
+
+            full_reply = ""
+            result_emitted = False
+
+            while True:
+                line_bytes = await process.stdout.readline()
+                if not line_bytes:
+                    break
+                line_str = line_bytes.decode('utf-8', errors='replace').strip()
+                if not line_str:
+                    continue
+                try:
+                    event_data = json.loads(line_str)
+                    event_name = event_data.get("event")
+                    if event_name == "step_update":
+                        su = event_data.get("step_update", {})
+                        delta = su.get("text_delta")
+                        if delta:
+                            full_reply += delta
+                            yield {"type": "delta", "text": delta}
+                    elif event_name == "result":
+                        result_data = event_data.get("result", {})
+                        resp = result_data.get("response", full_reply)
+                        result_emitted = True
+                        yield {
+                            "type": "done",
+                            "reply": resp if resp else full_reply,
+                            "context_truncated": False,
+                            "usage": result_data.get("usage")
+                        }
+                except json.JSONDecodeError:
+                    continue
+
+            await process.wait()
+
+            if not result_emitted:
+                yield {
+                    "type": "done",
+                    "reply": full_reply,
+                    "context_truncated": False
+                }
+
+        except FileNotFoundError:
+            logger.warning("agy executable not found for stream. Returning mock stream.")
+            mock_text = "Das ist eine Mock-Antwort, da agy nicht gefunden wurde."
+            for word in mock_text.split(" "):
+                yield {"type": "delta", "text": word + " "}
+                await asyncio.sleep(0.02)
+            yield {
+                "type": "done",
+                "reply": mock_text,
+                "context_truncated": False
+            }
+        except Exception as e:
+            logger.error(f"Error in stream_message: {e}")
+            yield {
+                "type": "done",
+                "reply": f"Fehler bei der Streaming-Verarbeitung: {e}",
+                "context_truncated": False
+            }
+        finally:
+            if history_file_path and os.path.exists(history_file_path):
+                os.remove(history_file_path)
+
+    async def process_message(self, context_messages: list, new_message: str, image_paths: list = None, system_prompt: str = None, cwd: str = None) -> dict:
+        """
+        Calls the `agy` CLI with the provided context, new message, and optional image.
+        Returns a dictionary containing the AI's response text.
+        """
+        context_truncated = False
+        prompt, history_file_path = self._build_prompt_and_history(
+            context_messages, new_message, image_paths, system_prompt, cwd
+        )
+
+        cmd = [self.executable_path, "--dangerously-skip-permissions", "--prompt", prompt]
         
         log_cmd = cmd.copy()
         if "--prompt" in log_cmd:
@@ -180,7 +273,6 @@ class AgyClient:
         for attempt in range(MAX_RETRIES + 1):
             try:
                 t_agy_start = time.perf_counter()
-                # Use asyncio subprocess for non-blocking execution
                 process = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdout=asyncio.subprocess.PIPE,
@@ -221,7 +313,6 @@ class AgyClient:
                 }
                     
             except FileNotFoundError:
-                # Mock response for local development when agy is missing
                 logger.warning("agy executable not found. Returning mock data.")
                 return {
                     "reply": "Das ist eine Mock-Antwort, da agy nicht gefunden wurde.",

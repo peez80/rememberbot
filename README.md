@@ -18,6 +18,7 @@ I loved the agentic behavior of the `gemini` / `antigravity` CLI, and I wanted t
 
 ## Features
 - **Conversational Interface**: Interact with your AI agent just by chatting.
+- **Real-Time Live Streaming**: Experience smooth token-by-token output streaming powered by `agy --output-format stream-json` and Server-Sent Events (SSE).
 - **Advanced Image Support**: Upload pictures (with or without text captions) for automatic recognition and processing. On mobile devices, you can use your camera directly to snap and upload photos.
 - **Smart Parsing**: Powered by Google's Gemini models via the `antigravity-cli`, extracting structured data automatically.
 - **Responsive Web App**: Built with vanilla HTML/JS/CSS for a fast, responsive user experience.
@@ -66,10 +67,10 @@ Example `users.json`:
 > **Security Note:** Passwords are currently stored in plain text. This authentication mechanism is intended for local or personal use only. Do not use this in a public-facing or production environment without adding proper password hashing.
 
 ## Architecture
-- `app/main.py`: The FastAPI application entry point, handling routing and HTTP requests.
-- `app/agy_client.py`: The client wrapper for interacting with the `antigravity-cli` via subprocesses.
+- `app/main.py`: The FastAPI application entry point, handling routing, Server-Sent Events (SSE) streaming, and HTTP requests.
+- `app/agy_client.py`: The client wrapper for interacting with the `antigravity-cli` via asynchronous subprocesses (NDJSON streaming via `stream-json`).
 - `app/storage.py`: Handles saving the structured parsed data locally.
-- `app/static/`: Contains the frontend assets (`index.html`, `app.js`, `index.css`).
+- `app/static/`: Contains the frontend assets (`index.html`, `app.js`, `styles.css`) for progressive stream rendering and responsive UI.
 - `docker-compose.yml`: Defines the services and volume mappings for the Docker environment.
 
 ## CI/CD Pipeline
@@ -100,15 +101,15 @@ docker-compose run --rm web pytest tests/
 
 This will run all tests (both unit tests and Playwright E2E browser tests) together:
 - Local storage logic (`tests/test_storage.py`)
-- API endpoints and chat behavior (`tests/test_main.py`, `tests/test_thinking_status.py`)
-- `agy` CLI interaction and JSON parsing (`tests/test_agy_client.py`)
+- API endpoints and chat behavior (`tests/test_main.py`, `tests/test_thinking_status.py`, `tests/test_chat_stability.py`, `tests/test_streaming.py`)
+- `agy` CLI interaction, streaming and JSON parsing (`tests/test_agy_client.py`, `tests/test_streaming.py`)
 - UI component static asset integrity (`tests/test_scroll_button.py`)
-- End-to-End browser UI interactions and thinking indicator sync via Playwright (`tests/test_scroll_e2e.py`, `tests/test_thinking_animation_e2e.py`, `tests/test_visibility_sync_e2e.py`)
+- End-to-End browser UI interactions and live streaming via Playwright (`tests/test_scroll_e2e.py`, `tests/test_thinking_animation_e2e.py`, `tests/test_visibility_sync_e2e.py`, `tests/test_chat_stability.py`, `tests/test_streaming.py`)
 
 To run only the Playwright E2E browser tests:
 
 ```bash
-docker-compose run --rm web pytest tests/test_scroll_e2e.py tests/test_thinking_animation_e2e.py tests/test_visibility_sync_e2e.py
+docker-compose run --rm web pytest tests/test_scroll_e2e.py tests/test_thinking_animation_e2e.py tests/test_visibility_sync_e2e.py tests/test_chat_stability.py tests/test_streaming.py
 ```
 
 

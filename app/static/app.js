@@ -41,6 +41,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let selectedImageFiles = [];
     let currentSessionId = localStorage.getItem("currentSessionId");
     let currentSessionGpsEnabled = false;
+    let activeSubmittingSessionId = null;
 
     const scrollToBottomBtn = document.getElementById("scroll-to-bottom-btn");
 
@@ -83,6 +84,58 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
+    // Helper to format streaming / regular text with thought tags
+    const formatThoughtBlocks = (rawText, isStreaming = false) => {
+        let formatted = rawText;
+        // Closed thought blocks
+        formatted = formatted.replace(/<thought>([\s\S]*?)<\/thought>/g, (match, content) => {
+            return `<details class='ai-reasoning'><summary>Gedankengang der KI</summary><div class='reasoning-content'>\n${content.trim()}\n</div></details>\n`;
+        });
+        // Open unclosed thought block while streaming
+        if (isStreaming && formatted.includes('<thought>')) {
+            formatted = formatted.replace(/<thought>([\s\S]*)$/g, (match, content) => {
+                return `<details class='ai-reasoning' open><summary>Gedankengang der KI...</summary><div class='reasoning-content'>\n${content.trim()}\n</div></details>\n`;
+            });
+        }
+        return formatted;
+    };
+
+    const attachDownloadButtons = (bubble, text) => {
+        const pathRegex = /\/app\/data\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)\/data\/([^\s"'`<>()*\[\]]+)/g;
+        let match;
+        const downloadLinks = [];
+        while ((match = pathRegex.exec(text)) !== null) {
+            let linkPath = match[0];
+            if (linkPath.endsWith('.') || linkPath.endsWith(',')) {
+                linkPath = linkPath.slice(0, -1);
+            }
+            downloadLinks.push(linkPath);
+        }
+
+        const uniqueLinks = Array.from(new Set(downloadLinks));
+        if (uniqueLinks.length > 0) {
+            let downloadContainer = bubble.querySelector(".download-links-container");
+            if (!downloadContainer) {
+                downloadContainer = document.createElement("div");
+                downloadContainer.className = "download-links-container";
+                bubble.appendChild(downloadContainer);
+            } else {
+                downloadContainer.innerHTML = '';
+            }
+
+            uniqueLinks.forEach(linkPath => {
+                const btn = document.createElement("a");
+                btn.href = linkPath;
+                btn.target = "_blank";
+                const fileName = decodeURIComponent(linkPath.split('/').pop());
+                btn.download = fileName;
+                btn.className = "download-btn";
+                btn.innerHTML = `<i class="ph-bold ph-download-simple"></i> ${fileName}`;
+                downloadContainer.appendChild(btn);
+            });
+        }
+    };
+
     // Append a message to the chat
     const appendMessage = (text, isUser, imagesData = [], timestampStr = null, skipScroll = false, smoothScroll = false) => {
         const msgDiv = document.createElement("div");
@@ -101,17 +154,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
         if (text) {
             const textDiv = document.createElement("div");
+            const formatted = isUser ? text : formatThoughtBlocks(text, false);
 
             if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
-                const parsedHTML = marked.parse(text);
-                textDiv.innerHTML = DOMPurify.sanitize(parsedHTML, { ADD_TAGS: ['details', 'summary'], ADD_ATTR: ['class'] });
+                const parsedHTML = marked.parse(formatted);
+                textDiv.innerHTML = DOMPurify.sanitize(parsedHTML, { ADD_TAGS: ['details', 'summary'], ADD_ATTR: ['class', 'open'] });
                 textDiv.className = "markdown-body";
                 textDiv.querySelectorAll("img").forEach(img => {
                     img.loading = "lazy";
                     img.decoding = "async";
                 });
             } else {
-                textDiv.textContent = text;
+                textDiv.textContent = formatted;
             }
 
             bubble.appendChild(textDiv);
@@ -169,36 +223,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         if (!isUser && text) {
-            const pathRegex = /\/app\/data\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)\/data\/([^\s"'`<>()*\[\]]+)/g;
-            let match;
-            const downloadLinks = [];
-            while ((match = pathRegex.exec(text)) !== null) {
-                let linkPath = match[0];
-                if (linkPath.endsWith('.') || linkPath.endsWith(',')) {
-                    linkPath = linkPath.slice(0, -1);
-                }
-                downloadLinks.push(linkPath);
-            }
-
-            const uniqueLinks = Array.from(new Set(downloadLinks));
-
-            if (uniqueLinks.length > 0) {
-                const downloadContainer = document.createElement("div");
-                downloadContainer.className = "download-links-container";
-
-                uniqueLinks.forEach(linkPath => {
-                    const btn = document.createElement("a");
-                    btn.href = linkPath;
-                    btn.target = "_blank";
-                    const fileName = decodeURIComponent(linkPath.split('/').pop());
-                    btn.download = fileName;
-                    btn.className = "download-btn";
-                    btn.innerHTML = `<i class="ph-bold ph-download-simple"></i> ${fileName}`;
-                    downloadContainer.appendChild(btn);
-                });
-
-                bubble.appendChild(downloadContainer);
-            }
+            attachDownloadButtons(bubble, text);
         }
 
         msgDiv.appendChild(bubble);
@@ -320,7 +345,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 const data = await res.json();
                 if (!data.is_processing) {
                     stopPollingSession(sessionId);
-                    if (currentSessionId === sessionId) {
+                    if (currentSessionId === sessionId && activeSubmittingSessionId !== sessionId) {
                         await selectSession(sessionId);
                     }
                     const sessionsRes = await fetch("/api/sessions");
@@ -339,7 +364,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // --- Session Management ---
 
-    const selectSession = async (sessionId) => {
+    const selectSession = async (sessionId, forceReload = false) => {
+        if (!forceReload && activeSubmittingSessionId === sessionId && currentSessionId === sessionId) {
+            return;
+        }
         currentSessionId = sessionId;
         localStorage.setItem("currentSessionId", sessionId);
         contextWarning.style.display = "none";
@@ -595,7 +623,10 @@ document.addEventListener("DOMContentLoaded", () => {
         removeTypingIndicator();
 
         // Remove initial greeting if it's the first message
-        if (chatContainer.children.length === 1 && chatContainer.firstElementChild.innerText.includes("Hallo! Was hast du heute gegessen")) {
+        if (chatContainer.children.length === 1 && (
+            chatContainer.firstElementChild.innerText.includes("Hallo! Was hast du heute gegessen") ||
+            chatContainer.firstElementChild.innerText.includes("Hallo, wie geht es dir heute?")
+        )) {
             chatContainer.innerHTML = '';
         }
 
@@ -605,6 +636,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // Prepare form data
         const formData = new FormData();
         formData.append("message", text);
+        formData.append("stream", "true");
         filesToUpload.forEach(file => {
             formData.append("images", file);
         });
@@ -614,38 +646,150 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Show typing indicator again for the actual API request
         showTypingIndicator();
-        startPollingSession(submittedSessionId);
+        activeSubmittingSessionId = submittedSessionId;
 
         try {
             const response = await fetch(`/api/sessions/${submittedSessionId}/chat`, {
                 method: "POST",
+                headers: {
+                    "Accept": "text/event-stream, application/json"
+                },
                 body: formData
             });
-            const data = await response.json();
 
-            stopPollingSession(submittedSessionId);
-            removeTypingIndicator();
+            const contentType = response.headers.get("content-type") || "";
 
-            if (currentSessionId !== submittedSessionId) return;
+            if (contentType.includes("text/event-stream")) {
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let accumulatedText = "";
+                let sseBuffer = "";
+                let aiMsgDiv = null;
+                let textDiv = null;
+                let bubbleDiv = null;
 
-            appendMessage(data.reply, false, [], data.timestamp, false, true);
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
 
-            if (data.context_truncated) {
-                contextWarning.style.display = "flex";
+                    sseBuffer += decoder.decode(value, { stream: true });
+                    const lines = sseBuffer.split("\n");
+                    sseBuffer = lines.pop(); // keep partial line remainder
+
+                    for (const line of lines) {
+                        const trimmed = line.trim();
+                        if (trimmed.startsWith("data: ")) {
+                            try {
+                                const event = JSON.parse(trimmed.slice(6));
+                                if (event.type === "delta") {
+                                    if (currentSessionId === submittedSessionId) {
+                                        removeTypingIndicator();
+                                        if (!aiMsgDiv) {
+                                            aiMsgDiv = document.createElement("div");
+                                            aiMsgDiv.className = "message ai-message streaming";
+                                            bubbleDiv = document.createElement("div");
+                                            bubbleDiv.className = "message-bubble";
+                                            textDiv = document.createElement("div");
+                                            textDiv.className = "markdown-body";
+                                            bubbleDiv.appendChild(textDiv);
+                                            aiMsgDiv.appendChild(bubbleDiv);
+                                            chatContainer.appendChild(aiMsgDiv);
+                                        }
+
+                                        accumulatedText += event.text;
+                                        const formatted = formatThoughtBlocks(accumulatedText, true);
+
+                                        if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+                                            const parsedHTML = marked.parse(formatted);
+                                            textDiv.innerHTML = DOMPurify.sanitize(parsedHTML, { ADD_TAGS: ['details', 'summary'], ADD_ATTR: ['class', 'open'] });
+                                            textDiv.querySelectorAll("img").forEach(img => {
+                                                img.loading = "lazy";
+                                                img.decoding = "async";
+                                            });
+                                        } else {
+                                            textDiv.textContent = formatted;
+                                        }
+
+                                        scrollToBottom(false);
+                                    } else {
+                                        accumulatedText += event.text;
+                                    }
+                                } else if (event.type === "done") {
+                                    removeTypingIndicator();
+                                    if (aiMsgDiv) {
+                                        aiMsgDiv.classList.remove("streaming");
+                                    }
+                                    if (currentSessionId === submittedSessionId) {
+                                        if (!aiMsgDiv) {
+                                            appendMessage(event.reply || accumulatedText, false, [], event.timestamp, false, true);
+                                        } else {
+                                            const finalFormatted = formatThoughtBlocks(event.reply || accumulatedText, false);
+                                            if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+                                                const parsedHTML = marked.parse(finalFormatted);
+                                                textDiv.innerHTML = DOMPurify.sanitize(parsedHTML, { ADD_TAGS: ['details', 'summary'], ADD_ATTR: ['class', 'open'] });
+                                                textDiv.querySelectorAll("img").forEach(img => {
+                                                    img.loading = "lazy";
+                                                    img.decoding = "async";
+                                                });
+                                            } else {
+                                                textDiv.textContent = finalFormatted;
+                                            }
+                                            attachDownloadButtons(bubbleDiv, event.reply || accumulatedText);
+                                        }
+                                        if (event.context_truncated) {
+                                            contextWarning.style.display = "flex";
+                                        }
+                                    }
+                                }
+                            } catch (e) {
+                                console.warn("Error parsing SSE event:", e, trimmed);
+                            }
+                        }
+                    }
+                }
+
+                removeTypingIndicator();
+                if (aiMsgDiv) {
+                    aiMsgDiv.classList.remove("streaming");
+                }
+
+                // Reload sessions in case the title changed
+                const sessionsRes = await fetch("/api/sessions");
+                if (sessionsRes.ok) {
+                    const sessionsData = await sessionsRes.json();
+                    renderSessionList(sessionsData);
+                }
+
+            } else {
+                const data = await response.json();
+                removeTypingIndicator();
+
+                if (currentSessionId !== submittedSessionId) return;
+
+                appendMessage(data.reply, false, [], data.timestamp, false, true);
+
+                if (data.context_truncated) {
+                    contextWarning.style.display = "flex";
+                }
+
+                // Reload sessions in case the title changed
+                const sessionsRes = await fetch("/api/sessions");
+                if (sessionsRes.ok) {
+                    const sessionsData = await sessionsRes.json();
+                    renderSessionList(sessionsData);
+                }
             }
 
-            // Reload sessions in case the title changed
-            const sessionsRes = await fetch("/api/sessions");
-            const sessionsData = await sessionsRes.json();
-            renderSessionList(sessionsData);
-
         } catch (error) {
-            stopPollingSession(submittedSessionId);
             removeTypingIndicator();
             if (currentSessionId === submittedSessionId) {
                 appendMessage("Es gab einen Verbindungsfehler. Bitte versuche es später noch einmal.", false);
             }
             console.error("Error calling chat API", error);
+        } finally {
+            if (activeSubmittingSessionId === submittedSessionId) {
+                activeSubmittingSessionId = null;
+            }
         }
     });
 
@@ -817,7 +961,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Reload session on visibility change to recover from suspended state disconnects
     document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible" && currentSessionId) {
+        if (document.visibilityState === "visible" && currentSessionId && activeSubmittingSessionId !== currentSessionId) {
             selectSession(currentSessionId);
         }
     });

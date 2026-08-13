@@ -278,6 +278,20 @@ body {
     border-bottom-left-radius: 0.25rem;
 }
 
+.ai-message.streaming .markdown-body > :last-child::after,
+.ai-message.streaming .reasoning-content > :last-child::after {
+    content: ' ▌';
+    display: inline-block;
+    color: var(--primary-color);
+    animation: blinkCursor 0.8s infinite;
+    font-weight: bold;
+}
+
+@keyframes blinkCursor {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+}
+
 .user-message .message-bubble {
     background-color: var(--user-bubble);
     color: #fff;

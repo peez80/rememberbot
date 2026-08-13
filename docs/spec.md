@@ -22,15 +22,15 @@ Die Anwendung ist ein generischer, agentischer KI-Chat mit persistentem Gedächt
 
 ### 2.4 KI-Backend (`antigravity-cli`)
 - Die Verarbeitung der Eingaben (Textverständnis, Bilderkennung und Antwortgenerierung) erfolgt über das Kommandozeilen-Tool `antigravity-cli` (Kommando: `agy`).
-- Die Python Web-App ruft das Tool lokal via Shell / Subprocess (`subprocess.run` o.ä.) auf, übergibt den Kontext (Text oder Dateipfad zum Bild) und wertet die Ausgabe aus.
-- Das Backend muss die Eingaben in strukturierte Daten umwandeln und eine freundliche Antwort für den Chat generieren.
+- Die Python Web-App ruft das Tool lokal via asynchronem Subprozess auf (`asyncio.create_subprocess_exec`), übergibt den Kontext (Text oder Dateipfade zu Bildern) und verarbeitet die Ausgabe in Echtzeit.
+- Die Textgenerierung erfolgt über Live-Token-Streaming (`agy --output-format stream-json`), wobei Chunks per Server-Sent Events (SSE) an das Frontend gestreamt und dort progressiv als Markdown gerendert werden.
 
 ## 3. Technische Anforderungen
 
 ### 3.1 Technologie-Stack
-- **Backend:** FastAPI (Python).
-- **Frontend:** Unkompliziertes Setup, z. B. Vanilla HTML/JS/CSS (ggf. mit Jinja2-Templates), um die Komplexität gering zu halten.
-- **KI-Integration:** Ausführen von Shell-Kommandos (`agy`) aus dem Backend heraus.
+- **Backend:** FastAPI (Python) mit asynchronem I/O und Server-Sent Events (`StreamingResponse`).
+- **Frontend:** Unkompliziertes Setup mit modernem Vanilla HTML/JS/CSS, Markdown-Rendering (`marked`) und DOM-Sanitizing (`DOMPurify`).
+- **KI-Integration:** Ausführen von `agy` mit NDJSON-Streaming (`--output-format stream-json`) aus dem Backend heraus.
 
 ### 3.2 Infrastruktur & Deployment (Full-Docker Setup)
 - Die gesamte Anwendung wird per Docker deployed.
@@ -45,6 +45,6 @@ Die Anwendung ist ein generischer, agentischer KI-Chat mit persistentem Gedächt
 ## 4. Gelöste Architektur-Entscheidungen
 - **Docker Setup:** Ein einzelner FastAPI-Container wird genutzt, um sowohl die API-Endpunkte bereitzustellen als auch die statischen Frontend-Dateien (HTML/JS/CSS) auszuliefern.
 - **JSON Schema:** Es wird ein generisches Schema verwendet (z.B. `{"type": "record", "timestamp": "...", "raw_input": "...", "data": {...}}`), anpassbar an den jeweiligen Kontext.
-- **Chat Kontext:** Das Backend pflegt die Chat-Historie und übergibt die letzten N Nachrichten (z.B. 5) als Kontext im Prompt an `agy`.
-- **Bildverarbeitung:** Hochgeladene Bilder werden temporär im Container gespeichert (z.B. `/tmp`), der absolute Dateipfad wird an `agy` übergeben und anschließend wird das Bild gelöscht.
-- **agy Parameter:** Es wird von Standardparametern (`--prompt` und `--image`) ausgegangen. Der Aufruf wird in einer eigenen Python-Klasse gekapselt, um ihn später leicht anpassen zu können.
+- **Chat Kontext & Streaming:** Das Backend pflegt die Chat-Historie und übergibt den vollständigen bisherigen Kontext in einer temporären Datei an `agy`. Antworten werden über `stream-json` als NDJSON gestreamt und per SSE an den Browser weitergeleitet.
+- **Bildverarbeitung:** Hochgeladene Bilder werden persistent im Upload-Ordner der Session gespeichert (`/uploads/{session_id}/{filename}`) und als Bildpfade an `agy` übergeben.
+- **agy Parameter:** Es werden Standardparameter (`--prompt`, `--output-format stream-json`, `--dangerously-skip-permissions`) verwendet. Der Aufruf ist in der Klasse `AgyClient` gekapselt.

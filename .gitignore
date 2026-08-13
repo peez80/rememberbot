@@ -32,3 +32,4 @@ docker-compose.override.yml
 # Project specific
 _rememberbot_data/
 agy.tar.gz
+start_local.sh
