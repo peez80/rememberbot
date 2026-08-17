@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11-slim AS production
 
 # Set working directory
 WORKDIR /app
@@ -10,9 +10,7 @@ RUN apt-get update && apt-get install -y \
 
 # Copy requirements and install them
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && \
-    playwright install --with-deps chromium
-
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Dynamically install the latest antigravity-cli
 RUN if [ "$(uname -m)" = "x86_64" ]; then ARCH="x64"; elif [ "$(uname -m)" = "aarch64" ]; then ARCH="arm64"; else ARCH="$(uname -m)"; fi && \
@@ -37,3 +35,15 @@ EXPOSE 8000
 
 # Start FastAPI application
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# Stage 2: Test stage for running tests with Playwright and pytest
+FROM production AS test
+
+# Install test dependencies and Playwright browser with dependencies
+COPY requirements-test.txt .
+RUN pip install --no-cache-dir -r requirements-test.txt && \
+    playwright install --with-deps chromium
+
+# Copy tests and pytest configuration
+COPY tests/ ./tests/
+COPY pytest.ini .

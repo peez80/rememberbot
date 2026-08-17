@@ -39,22 +39,23 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=${{ steps.vars.outputs.sha_short }}-${{ steps.timestamp.outputs.timestamp }}
 
-      - name: Build and load Docker image
+      - name: Build and load test Docker image
         uses: docker/build-push-action@v7
         with:
           context: .
+          target: test
           load: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: peez/rememberbot:test
 
       - name: Run Tests in Docker Container
         run: |
-          docker run --rm -v ${{ github.workspace }}/tests:/app/tests peez/rememberbot:latest pytest /app/tests
+          docker run --rm peez/rememberbot:test pytest /app/tests
 
       - name: Push Docker image
         uses: docker/build-push-action@v7
         with:
           context: .
+          target: production
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

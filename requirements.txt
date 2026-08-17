@@ -1,9 +1,4 @@
 fastapi
 uvicorn
 python-multipart
-pytest
-httpx
-pytest-asyncio
-playwright
-pytest-playwright
 Pillow

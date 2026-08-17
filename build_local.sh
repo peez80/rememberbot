@@ -1,2 +1,2 @@
 #!/bin/bash
-docker build -t peez/rememberbot:local .
+docker build --target production -t peez/rememberbot:local .

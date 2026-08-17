@@ -43,7 +43,7 @@ Die Anwendung ist ein generischer, agentischer KI-Chat mit persistentem Gedächt
 - **Dateinamen:** Zur sauberen Sortierung erhält jede JSON-Datei als Präfix einen ISO-Timestamp (z. B. `2026-07-05T21:20:45Z_record.json`).
 
 ## 4. Gelöste Architektur-Entscheidungen
-- **Docker Setup:** Ein einzelner FastAPI-Container wird genutzt, um sowohl die API-Endpunkte bereitzustellen als auch die statischen Frontend-Dateien (HTML/JS/CSS) auszuliefern.
+- **Docker Setup:** Ein Multi-Stage Dockerfile trennt das schlanke `production`-Image (FastAPI, uvicorn, `agy`-CLI, reine Laufzeit-Dependencies) vom `test`-Image (Playwright, Chromium-Binaries, Pytest). Dadurch bleibt das im Deployment/CI ausgelieferte Image minimal groß, während alle Tests vollständig ausgeführt werden können.
 - **JSON Schema:** Es wird ein generisches Schema verwendet (z.B. `{"type": "record", "timestamp": "...", "raw_input": "...", "data": {...}}`), anpassbar an den jeweiligen Kontext.
 - **Chat Kontext & Streaming:** Das Backend pflegt die Chat-Historie und übergibt den vollständigen bisherigen Kontext in einer temporären Datei an `agy`. Antworten werden über `stream-json` als NDJSON gestreamt und per SSE an den Browser weitergeleitet.
 - **Bildverarbeitung & Uploads:** Hochgeladene Bilder werden persistent im Upload-Ordner der Session gespeichert (`/uploads/{session_id}/{filename}`) und als Bildpfade an `agy` übergeben. Mobile Kamera-Uploads ohne Dateiendung erhalten automatisch einen sicheren `.jpg`-Fallback.
