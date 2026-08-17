@@ -60,10 +60,14 @@ def test_get_sessions_endpoint(mock_get, mock_fire, mock_cleanup):
     mock_cleanup.assert_called_once_with("testuser")
     mock_fire.assert_called_once()
 
+@patch("app.main.agy_client")
 @patch("app.main.get_sessions")
 @patch("app.main.get_session_history")
-def test_get_history_endpoint(mock_history, mock_get_sessions):
+def test_get_history_endpoint(mock_history, mock_get_sessions, mock_agy):
     mock_auth()
+    async def mock_icon(*args, **kwargs):
+        pass
+    mock_agy.generate_chat_icon.side_effect = mock_icon
     mock_get_sessions.return_value = [{"id": "sess-123", "title": "Test"}]
     mock_history.return_value = [{"text": "Hi", "is_user": True, "image_urls": [], "images": None, "timestamp": None}]
     response = client.get("/api/sessions/sess-123/history")
@@ -279,3 +283,81 @@ def test_chat_endpoint_with_location(mock_get_settings, mock_update_title, mock_
     # Check that location was sent to system_prompt
     call_kwargs = mock_agy_client.process_message.call_args.kwargs
     assert "Lat: 48.0, Lon: 11.0" in call_kwargs["system_prompt"]
+
+@patch("app.main.agy_client")
+@patch("app.main.get_session_history")
+@patch("app.main.save_session_message")
+@patch("app.main.get_sessions")
+@patch("app.main.update_session_title")
+@patch("app.main.get_session_settings")
+def test_image_upload_without_extension_fallback(mock_get_settings, mock_update_title, mock_get_sessions, mock_save_msg, mock_get_history, mock_agy_client):
+    mock_auth()
+    mock_get_history.return_value = []
+    mock_get_settings.return_value = {"prompt": "", "include_gps": False}
+    mock_get_sessions.return_value = [{"id": "sess-blob-1", "title": "Neuer Chat"}]
+
+    async def mock_process(*args, **kwargs):
+        return {"reply": "Bild erkannt", "context_truncated": False}
+    mock_agy_client.process_message.side_effect = mock_process
+    async def mock_icon(*args, **kwargs):
+        pass
+    mock_agy_client.generate_chat_icon.side_effect = mock_icon
+
+    import base64
+    png_data = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=")
+    
+    # Simulate mobile camera sending filename 'blob' or empty extension
+    files = {"images": ("blob", png_data, "image/png")}
+    response = client.post("/api/sessions/sess-blob-1/chat", data={"message": "Test Blob"}, files=files)
+    
+    assert response.status_code == 200
+    user_msg_call = mock_save_msg.call_args_list[0][0][2]
+    assert len(user_msg_call["images"]) == 1
+    image_url = user_msg_call["images"][0]["url"]
+    # Must end with a valid image extension like .jpg or .png, not empty
+    assert image_url.endswith(".jpg") or image_url.endswith(".png")
+
+@patch("app.main.agy_client")
+@patch("app.main.get_session_history")
+@patch("app.main.save_session_message")
+@patch("app.main.get_sessions")
+@patch("app.main.update_session_title")
+@patch("app.main.get_session_settings")
+def test_chat_with_image_only_no_text(mock_get_settings, mock_update_title, mock_get_sessions, mock_save_msg, mock_get_history, mock_agy_client):
+    mock_auth()
+    mock_get_history.return_value = []
+    mock_get_settings.return_value = {"prompt": "", "include_gps": False}
+    mock_get_sessions.return_value = [{"id": "sess-img-only", "title": "Neuer Chat"}]
+
+    async def mock_process(*args, **kwargs):
+        return {"reply": "Reines Bild analysiert", "context_truncated": False}
+    mock_agy_client.process_message.side_effect = mock_process
+    async def mock_icon(*args, **kwargs):
+        pass
+    mock_agy_client.generate_chat_icon.side_effect = mock_icon
+
+    import base64
+    png_data = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=")
+    
+    files = {"images": ("camera.jpg", png_data, "image/jpeg")}
+    response = client.post("/api/sessions/sess-img-only/chat", data={"message": ""}, files=files)
+    
+    assert response.status_code == 200
+    user_msg_call = mock_save_msg.call_args_list[0][0][2]
+    assert user_msg_call["text"] == "[1 Bild(er) gesendet]"
+    assert user_msg_call["is_user"] is True
+    assert len(user_msg_call["images"]) == 1
+
+@patch("app.main.get_sessions")
+def test_chat_endpoint_max_images_limit(mock_get_sessions):
+    mock_auth()
+    mock_get_sessions.return_value = [{"id": "sess-limit", "title": "Chat"}]
+    
+    import base64
+    png_data = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=")
+    
+    files = [("images", ("test.png", png_data, "image/png")) for _ in range(6)]
+    response = client.post("/api/sessions/sess-limit/chat", data={"message": "Zu viele Bilder"}, files=files)
+    assert response.status_code == 400
+    assert "Maximal 5 Bilder erlaubt" in response.json()["error"]
+

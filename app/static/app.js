@@ -137,9 +137,9 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     // Append a message to the chat
-    const appendMessage = (text, isUser, imagesData = [], timestampStr = null, skipScroll = false, smoothScroll = false) => {
+    const appendMessage = (text, isUser, imagesData = [], timestampStr = null, skipScroll = false, smoothScroll = false, isHistory = false) => {
         const msgDiv = document.createElement("div");
-        msgDiv.className = `message ${isUser ? "user-message" : "ai-message"}`;
+        msgDiv.className = `message ${isUser ? "user-message" : "ai-message"} ${isHistory ? "history-message" : "new-message"}`;
 
         if (timestampStr) {
             const timeDiv = document.createElement("div");
@@ -234,11 +234,24 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     };
 
+    // Append error message to the chat
+    const appendErrorMessage = (errorText) => {
+        const msgDiv = document.createElement("div");
+        msgDiv.className = "message ai-message error-message new-message";
+        const bubble = document.createElement("div");
+        bubble.className = "message-bubble";
+        bubble.textContent = errorText;
+        msgDiv.appendChild(bubble);
+        chatContainer.appendChild(msgDiv);
+        scrollToBottom(true);
+    };
+
     // Show initial greeting
     const showInitialGreeting = () => {
         chatContainer.innerHTML = '';
         const msgDiv = document.createElement("div");
-        msgDiv.className = "message ai-message";
+        msgDiv.id = "initial-greeting";
+        msgDiv.className = "message ai-message history-message";
         msgDiv.innerHTML = `<div class="message-bubble">Hallo, wie geht es dir heute?</div>`;
         chatContainer.appendChild(msgDiv);
     };
@@ -266,56 +279,160 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     };
 
-    // Update preview UI
+    // Client-side image compression & optimization to prevent mobile OOM
+    const compressImage = async (file, maxDimension = 1920, quality = 0.85) => {
+        const isImage = (file.type && file.type.startsWith("image/")) ||
+                        (file.name && /\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(file.name)) ||
+                        file.name === "blob" ||
+                        !file.type;
+        if (!isImage) return file;
+
+        return new Promise((resolve) => {
+            let settled = false;
+            const timeoutId = setTimeout(() => {
+                if (!settled) {
+                    settled = true;
+                    try { URL.revokeObjectURL(url); } catch (_) {}
+                    resolve(file);
+                }
+            }, 3000);
+
+            const img = new Image();
+            let url = "";
+            try {
+                url = URL.createObjectURL(file);
+            } catch (_) {
+                clearTimeout(timeoutId);
+                resolve(file);
+                return;
+            }
+
+            img.onload = () => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeoutId);
+                try { URL.revokeObjectURL(url); } catch (_) {}
+                
+                try {
+                    let { width, height } = img;
+                    if (width <= maxDimension && height <= maxDimension && file.size < 1024 * 1024) {
+                        resolve(file);
+                        return;
+                    }
+
+                    if (width > maxDimension || height > maxDimension) {
+                        if (width > height) {
+                            height = Math.round((height * maxDimension) / width);
+                            width = maxDimension;
+                        } else {
+                            width = Math.round((width * maxDimension) / height);
+                            height = maxDimension;
+                        }
+                    }
+
+                    const canvas = document.createElement("canvas");
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext("2d");
+                    ctx.drawImage(img, 0, 0, width, height);
+
+                    canvas.toBlob(
+                        (blob) => {
+                            if (blob) {
+                                const originalName = file.name || "photo.jpg";
+                                const newFileName = originalName.replace(/\.[^/.]+$/, "") + ".jpg";
+                                const compressedFile = new File([blob], newFileName, {
+                                    type: "image/jpeg",
+                                    lastModified: Date.now()
+                                });
+                                resolve(compressedFile);
+                            } else {
+                                resolve(file);
+                            }
+                        },
+                        "image/jpeg",
+                        quality
+                    );
+                } catch (e) {
+                    resolve(file);
+                }
+            };
+
+            img.onerror = () => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeoutId);
+                try { URL.revokeObjectURL(url); } catch (_) {}
+                resolve(file);
+            };
+
+            img.src = url;
+        });
+    };
+
+    // Update preview UI using memory-efficient Object URLs
     const updatePreviewUI = () => {
         imagePreviewContainer.innerHTML = '';
         if (selectedImageFiles.length > 0) {
             imagePreviewContainer.style.display = "flex";
             selectedImageFiles.forEach((file, index) => {
-                const reader = new FileReader();
-                reader.onload = (event) => {
-                    const itemDiv = document.createElement("div");
-                    itemDiv.className = "preview-item";
+                const itemDiv = document.createElement("div");
+                itemDiv.className = "preview-item";
 
-                    const img = document.createElement("img");
-                    img.src = event.target.result;
+                const img = document.createElement("img");
+                const blobUrl = URL.createObjectURL(file);
+                img.src = blobUrl;
+                img.alt = "Vorschau";
 
-                    const btn = document.createElement("button");
-                    btn.type = "button";
-                    btn.className = "remove-image-btn";
-                    btn.innerHTML = '<i class="ph-bold ph-x"></i>';
-                    btn.title = "Bild entfernen";
-                    btn.onclick = () => {
-                        selectedImageFiles.splice(index, 1);
-                        updatePreviewUI();
-                    };
-
-                    itemDiv.appendChild(img);
-                    itemDiv.appendChild(btn);
-                    imagePreviewContainer.appendChild(itemDiv);
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.className = "remove-image-btn";
+                btn.innerHTML = '<i class="ph-bold ph-x"></i>';
+                btn.title = "Bild entfernen";
+                btn.onclick = () => {
+                    URL.revokeObjectURL(blobUrl);
+                    selectedImageFiles.splice(index, 1);
+                    updatePreviewUI();
                 };
-                reader.readAsDataURL(file);
+
+                itemDiv.appendChild(img);
+                itemDiv.appendChild(btn);
+                imagePreviewContainer.appendChild(itemDiv);
             });
         } else {
             imagePreviewContainer.style.display = "none";
         }
     };
 
-    // Handle Image Selection
-    const handleImageSelection = (e, otherInputToClear) => {
+    // Handle Image Selection with instant preview and async background compression
+    const handleImageSelection = async (e, otherInputToClear) => {
         if (e.target.files && e.target.files.length > 0) {
-            const newFiles = Array.from(e.target.files);
+            const rawFiles = Array.from(e.target.files);
 
-            if (selectedImageFiles.length + newFiles.length > 5) {
+            if (selectedImageFiles.length + rawFiles.length > 5) {
                 alert("Du kannst maximal 5 Bilder auf einmal senden.");
-            } else {
-                selectedImageFiles = [...selectedImageFiles, ...newFiles];
+                otherInputToClear.value = "";
+                e.target.value = "";
+                return;
             }
 
+            const startIndex = selectedImageFiles.length;
+            selectedImageFiles = [...selectedImageFiles, ...rawFiles];
             otherInputToClear.value = "";
             e.target.value = "";
             updatePreviewUI();
             messageInput.focus();
+
+            try {
+                const compressedFiles = await Promise.all(rawFiles.map(f => compressImage(f)));
+                for (let i = 0; i < compressedFiles.length; i++) {
+                    if (selectedImageFiles[startIndex + i] === rawFiles[i]) {
+                        selectedImageFiles[startIndex + i] = compressedFiles[i];
+                    }
+                }
+            } catch (err) {
+                console.warn("Async compression error, keeping raw files", err);
+            }
         }
     };
 
@@ -364,14 +481,24 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // --- Session Management ---
 
+    const updateActiveSessionHighlight = (activeId) => {
+        document.querySelectorAll('.session-item').forEach(el => {
+            el.classList.toggle('active', el.dataset.sessionId === activeId);
+        });
+    };
+
+    let selectSessionCounter = 0;
+
     const selectSession = async (sessionId, forceReload = false) => {
-        if (!forceReload && activeSubmittingSessionId === sessionId && currentSessionId === sessionId) {
+        const isSwitchingSession = (currentSessionId !== sessionId);
+        if (!forceReload && !isSwitchingSession && activeSubmittingSessionId === sessionId) {
             return;
         }
+        const requestId = ++selectSessionCounter;
         currentSessionId = sessionId;
         localStorage.setItem("currentSessionId", sessionId);
         contextWarning.style.display = "none";
-        renderSessionList(window.lastSessions || []);
+        updateActiveSessionHighlight(sessionId);
 
         // Hide sidebar on mobile after selection
         if (window.innerWidth <= 768) {
@@ -398,8 +525,14 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         try {
-            // Fetch system prompt and settings
-            const promptRes = await fetch(`/api/sessions/${sessionId}/settings`);
+            const [promptRes, response] = await Promise.all([
+                fetch(`/api/sessions/${sessionId}/settings`),
+                fetch(`/api/sessions/${sessionId}/history`)
+            ]);
+
+            if (requestId !== selectSessionCounter) return;
+            if (currentSessionId !== sessionId) return;
+
             if (promptRes.ok) {
                 const promptData = await promptRes.json();
                 if (currentSessionId === sessionId) {
@@ -411,23 +544,23 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             }
 
-            const response = await fetch(`/api/sessions/${sessionId}/history`);
             const isProcessing = response.headers.get("X-Is-Processing") === "true";
             const history = await response.json();
 
+            if (requestId !== selectSessionCounter) return;
             if (currentSessionId !== sessionId) return;
 
             chatContainer.innerHTML = '';
             if (history && history.length > 0) {
                 history.forEach(msg => {
-                    appendMessage(msg.text, msg.is_user, msg.images || msg.image_urls || [], msg.timestamp, true, false);
+                    appendMessage(msg.text, msg.is_user, msg.images || msg.image_urls || [], msg.timestamp, true, false, true);
                 });
                 scrollToBottom(false);
-            } else if (!isProcessing) {
+            } else if (!isProcessing && activeSubmittingSessionId !== sessionId) {
                 showInitialGreeting();
             }
 
-            if (isProcessing) {
+            if (isProcessing || activeSubmittingSessionId === sessionId) {
                 showTypingIndicator();
                 startPollingSession(sessionId);
             } else {
@@ -461,6 +594,7 @@ document.addEventListener("DOMContentLoaded", () => {
         sessions.forEach(session => {
             const div = document.createElement("div");
             div.className = `session-item ${session.id === currentSessionId ? "active" : ""}`;
+            div.dataset.sessionId = session.id;
 
             // Format date slightly
             let dateStr = session.created_at;
@@ -573,6 +707,10 @@ document.addEventListener("DOMContentLoaded", () => {
         const text = messageInput.value.trim();
         if (!text && selectedImageFiles.length === 0) return;
 
+        const submittedSessionId = currentSessionId;
+        activeSubmittingSessionId = submittedSessionId; // Lock immediately to protect DOM
+        ++selectSessionCounter; // Invalidate any in-flight selectSession history fetches that started before submit
+
         // Hide warning and show UI feedback immediately
         contextWarning.style.display = "none";
         
@@ -593,8 +731,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Show typing indicator while we possibly fetch GPS
         showTypingIndicator();
-
-        const submittedSessionId = currentSessionId;
         
         let locationStr = "";
         if (currentSessionGpsEnabled) {
@@ -622,16 +758,14 @@ document.addEventListener("DOMContentLoaded", () => {
         // Remove the early typing indicator so we can append the user message
         removeTypingIndicator();
 
-        // Remove initial greeting if it's the first message
-        if (chatContainer.children.length === 1 && (
-            chatContainer.firstElementChild.innerText.includes("Hallo! Was hast du heute gegessen") ||
-            chatContainer.firstElementChild.innerText.includes("Hallo, wie geht es dir heute?")
-        )) {
-            chatContainer.innerHTML = '';
+        // Remove initial greeting if it exists
+        const greetingEl = document.getElementById("initial-greeting");
+        if (greetingEl) {
+            greetingEl.remove();
         }
 
         const now = new Date().toISOString();
-        appendMessage(displayMsg, true, localImageUrls, now, false, true);
+        appendMessage(displayMsg, true, localImageUrls, now, false, true, false);
 
         // Prepare form data
         const formData = new FormData();
@@ -646,7 +780,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Show typing indicator again for the actual API request
         showTypingIndicator();
-        activeSubmittingSessionId = submittedSessionId;
 
         try {
             const response = await fetch(`/api/sessions/${submittedSessionId}/chat`, {
@@ -656,6 +789,21 @@ document.addEventListener("DOMContentLoaded", () => {
                 },
                 body: formData
             });
+
+            if (!response.ok) {
+                removeTypingIndicator();
+                let errorMsg = "Fehler beim Senden der Nachricht.";
+                try {
+                    const errData = await response.json();
+                    if (errData.error || errData.detail) {
+                        errorMsg = errData.error || errData.detail;
+                    }
+                } catch (_) {}
+                if (currentSessionId === submittedSessionId) {
+                    appendErrorMessage(errorMsg);
+                }
+                return;
+            }
 
             const contentType = response.headers.get("content-type") || "";
 
@@ -686,7 +834,7 @@ document.addEventListener("DOMContentLoaded", () => {
                                         removeTypingIndicator();
                                         if (!aiMsgDiv) {
                                             aiMsgDiv = document.createElement("div");
-                                            aiMsgDiv.className = "message ai-message streaming";
+                                            aiMsgDiv.className = "message ai-message streaming new-message";
                                             bubbleDiv = document.createElement("div");
                                             bubbleDiv.className = "message-bubble";
                                             textDiv = document.createElement("div");
@@ -721,7 +869,7 @@ document.addEventListener("DOMContentLoaded", () => {
                                     }
                                     if (currentSessionId === submittedSessionId) {
                                         if (!aiMsgDiv) {
-                                            appendMessage(event.reply || accumulatedText, false, [], event.timestamp, false, true);
+                                            appendMessage(event.reply || accumulatedText, false, [], event.timestamp, false, true, false);
                                         } else {
                                             const finalFormatted = formatThoughtBlocks(event.reply || accumulatedText, false);
                                             if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
@@ -739,6 +887,14 @@ document.addEventListener("DOMContentLoaded", () => {
                                         if (event.context_truncated) {
                                             contextWarning.style.display = "flex";
                                         }
+                                    }
+                                } else if (event.type === "error") {
+                                    removeTypingIndicator();
+                                    if (aiMsgDiv) {
+                                        aiMsgDiv.remove();
+                                    }
+                                    if (currentSessionId === submittedSessionId) {
+                                        appendErrorMessage(event.error || "Fehler bei der Antwortgenerierung.");
                                     }
                                 }
                             } catch (e) {
@@ -766,7 +922,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 if (currentSessionId !== submittedSessionId) return;
 
-                appendMessage(data.reply, false, [], data.timestamp, false, true);
+                appendMessage(data.reply, false, [], data.timestamp, false, true, false);
 
                 if (data.context_truncated) {
                     contextWarning.style.display = "flex";
@@ -783,7 +939,7 @@ document.addEventListener("DOMContentLoaded", () => {
         } catch (error) {
             removeTypingIndicator();
             if (currentSessionId === submittedSessionId) {
-                appendMessage("Es gab einen Verbindungsfehler. Bitte versuche es später noch einmal.", false);
+                appendErrorMessage("Es gab einen Verbindungsfehler. Bitte versuche es später noch einmal.");
             }
             console.error("Error calling chat API", error);
         } finally {

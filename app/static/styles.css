@@ -145,6 +145,10 @@ body {
     animation: fadeIn 0.3s ease-out forwards;
 }
 
+.message.history-message {
+    animation: none;
+}
+
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: translateY(0); }
@@ -297,6 +301,13 @@ body {
     color: #fff;
     border-bottom-right-radius: 0.25rem;
 }
+
+.error-message .message-bubble {
+    background-color: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+}
+
 
 .download-links-container {
     display: flex;

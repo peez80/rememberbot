@@ -6,7 +6,7 @@ import uvicorn
 from app.main import app
 from playwright.async_api import async_playwright, expect
 
-SERVER_PORT = 8009
+SERVER_PORT = 8013
 
 
 @pytest.fixture(scope="module", autouse=True)

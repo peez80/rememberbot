@@ -46,5 +46,12 @@ Die Anwendung ist ein generischer, agentischer KI-Chat mit persistentem Gedächt
 - **Docker Setup:** Ein einzelner FastAPI-Container wird genutzt, um sowohl die API-Endpunkte bereitzustellen als auch die statischen Frontend-Dateien (HTML/JS/CSS) auszuliefern.
 - **JSON Schema:** Es wird ein generisches Schema verwendet (z.B. `{"type": "record", "timestamp": "...", "raw_input": "...", "data": {...}}`), anpassbar an den jeweiligen Kontext.
 - **Chat Kontext & Streaming:** Das Backend pflegt die Chat-Historie und übergibt den vollständigen bisherigen Kontext in einer temporären Datei an `agy`. Antworten werden über `stream-json` als NDJSON gestreamt und per SSE an den Browser weitergeleitet.
-- **Bildverarbeitung:** Hochgeladene Bilder werden persistent im Upload-Ordner der Session gespeichert (`/uploads/{session_id}/{filename}`) und als Bildpfade an `agy` übergeben.
+- **Bildverarbeitung & Uploads:** Hochgeladene Bilder werden persistent im Upload-Ordner der Session gespeichert (`/uploads/{session_id}/{filename}`) und als Bildpfade an `agy` übergeben. Mobile Kamera-Uploads ohne Dateiendung erhalten automatisch einen sicheren `.jpg`-Fallback.
+- **UI-Stabilität & Concurrency-Schutz:**
+  - Sofortige Persistierung der Nutzernachricht (`save_session_message`) im Endpoint sichert Texte und hochgeladene Bilder dauerhaft, selbst wenn der Nutzer den Chat unmittelbar wechselt oder die Verbindung abbricht.
+  - Hintergrund-Absicherung der KI-Verarbeitung und Persistierung via `asyncio.shield`.
+  - Sofortige Registrierung aktiver Submits (`activeSubmittingSessionId`) und Request-Sequenzzähler (`selectSessionCounter`) schützen den Chat-Container vor DOM-Wipes durch parallele `visibilitychange`-Events oder verzögerte Hintergrund-Fetches.
+  - Erhalt der Sidebar-DOM-Struktur zur Vermeidung von Flackern beim Session-Wechsel.
 - **agy Parameter:** Es werden Standardparameter (`--prompt`, `--output-format stream-json`, `--dangerously-skip-permissions`) verwendet. Der Aufruf ist in der Klasse `AgyClient` gekapselt.
+
+

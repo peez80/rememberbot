@@ -104,12 +104,12 @@ This will run all tests (both unit tests and Playwright E2E browser tests) toget
 - API endpoints and chat behavior (`tests/test_main.py`, `tests/test_thinking_status.py`, `tests/test_chat_stability.py`, `tests/test_streaming.py`)
 - `agy` CLI interaction, streaming and JSON parsing (`tests/test_agy_client.py`, `tests/test_streaming.py`)
 - UI component static asset integrity (`tests/test_scroll_button.py`)
-- End-to-End browser UI interactions and live streaming via Playwright (`tests/test_scroll_e2e.py`, `tests/test_thinking_animation_e2e.py`, `tests/test_visibility_sync_e2e.py`, `tests/test_chat_stability.py`, `tests/test_streaming.py`)
+- End-to-End browser UI interactions, concurrency and live streaming via Playwright (`tests/test_scroll_e2e.py`, `tests/test_thinking_animation_e2e.py`, `tests/test_visibility_sync_e2e.py`, `tests/test_chat_stability.py`, `tests/test_ui_concurrency_e2e.py`, `tests/test_streaming.py`)
 
 To run only the Playwright E2E browser tests:
 
 ```bash
-docker-compose run --rm web pytest tests/test_scroll_e2e.py tests/test_thinking_animation_e2e.py tests/test_visibility_sync_e2e.py tests/test_chat_stability.py tests/test_streaming.py
+docker-compose run --rm web pytest tests/test_scroll_e2e.py tests/test_thinking_animation_e2e.py tests/test_visibility_sync_e2e.py tests/test_chat_stability.py tests/test_ui_concurrency_e2e.py tests/test_streaming.py
 ```
 
 

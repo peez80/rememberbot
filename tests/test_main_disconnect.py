@@ -129,3 +129,41 @@ async def test_client_disconnect_data_loss(real_server, auth_cookies):
     
         # The background task should have successfully saved both the user message and the AI response
         assert len(history) == 2, f"Expected 2 messages to be saved due to asyncio.shield, but got {len(history)}: {history}"
+
+
+@pytest.mark.asyncio
+async def test_user_message_persisted_immediately_even_if_stream_aborted_early(real_server, auth_cookies):
+    """
+    Test 3: Verify that user message and attached image are persisted immediately even if client aborts the stream right away.
+    """
+    test_session = await create_test_session()
+
+    async def slow_stream(*args, **kwargs):
+        # Generator that hangs/delays to simulate client aborting before completion
+        yield {"type": "delta", "text": "Start..."}
+        await asyncio.sleep(5)
+        yield {"type": "done", "reply": "Fertig", "context_truncated": False}
+
+    with patch("app.main.agy_client.stream_message", side_effect=slow_stream):
+        async with httpx.AsyncClient(base_url=real_server, timeout=0.5) as client:
+            try:
+                files = {'images': ('photo.jpg', b'dummy photo data', 'image/jpeg')}
+                async with client.stream(
+                    "POST",
+                    f"/api/sessions/{test_session}/chat",
+                    data={"message": "Foto Nachricht", "stream": "true"},
+                    files=files,
+                    cookies=auth_cookies
+                ) as response:
+                    # Client aborts connection right away after reading first bytes
+                    async for chunk in response.aiter_bytes():
+                        break
+            except Exception:
+                pass
+
+        # Check history immediately without waiting 5 seconds
+        history = await get_session_history("testuser", test_session)
+        assert len(history) >= 1, f"Expected user message to be saved immediately, but history was {history}"
+        assert history[0]["is_user"] is True
+        assert "photo.jpg" in str(history[0]) or "/uploads/" in str(history[0])
+

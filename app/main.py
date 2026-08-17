@@ -285,7 +285,9 @@ async def chat_endpoint(
             
             for img in valid_images:
                 # Save uploaded image permanently
-                ext = os.path.splitext(img.filename)[1]
+                ext = os.path.splitext(img.filename)[1].lower() if img.filename else ""
+                if not ext or ext not in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"]:
+                    ext = ".jpg"
                 filename = f"{uuid.uuid4().hex}{ext}"
                 img_path = os.path.join(user_uploads_dir, filename)
                 
@@ -314,29 +316,33 @@ async def chat_endpoint(
         _active_chat_sessions.discard(session_key)
         raise
 
+    # Fetch history to check if this is the first message and to provide context to AI
+    history = await get_session_history(username, session_id)
+    is_first_message = len(history) == 0
+
+    # Save the user's message to history immediately upon receiving the request
+    user_msg_data = {
+        "text": display_msg, 
+        "is_user": True,
+        "image_urls": image_urls,
+        "images": images_data if images_data else None,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    await save_session_message(username, session_id, user_msg_data)
+
+    # Auto-rename if this is the first message and title is default
+    if is_first_message and session_metadata.get("title") == "Neuer Chat":
+        title_source = message if message else "Foto-Notiz"
+        new_title = (title_source[:27] + "...") if len(title_source) > 30 else title_source
+        await update_session_title(username, session_id, new_title)
+        target_path = get_session_icon_target_path(username, session_id)
+        fire_and_forget(agy_client.generate_chat_icon(new_title, target_path))
+
     is_stream = stream.lower() == "true" or "text/event-stream" in request.headers.get("accept", "")
 
     if is_stream:
         async def sse_generator():
             try:
-                # Auto-rename if this is the first message and title is default
-                history = await get_session_history(username, session_id)
-                if not history and session_metadata.get("title") == "Neuer Chat" and message:
-                    new_title = (message[:27] + "...") if len(message) > 30 else message
-                    await update_session_title(username, session_id, new_title)
-                    target_path = get_session_icon_target_path(username, session_id)
-                    fire_and_forget(agy_client.generate_chat_icon(new_title, target_path))
-
-                # Save the user's message to history
-                user_msg_data = {
-                    "text": display_msg, 
-                    "is_user": True,
-                    "image_urls": image_urls,
-                    "images": images_data if images_data else None,
-                    "timestamp": datetime.now(timezone.utc).isoformat()
-                }
-                await save_session_message(username, session_id, user_msg_data)
-
                 user_data_dir = os.path.abspath(os.path.join(DATA_DIR, username, "sessions", session_id, "data"))
                 os.makedirs(user_data_dir, exist_ok=True)
                 
@@ -410,9 +416,12 @@ async def chat_endpoint(
                     "is_user": False,
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 }
-                await save_session_message(username, session_id, ai_msg_data)
+                await asyncio.shield(save_session_message(username, session_id, ai_msg_data))
 
                 yield f"data: {json.dumps({'type': 'done', 'reply': saved_reply, 'context_truncated': context_truncated, 'timestamp': ai_msg_data['timestamp']})}\n\n"
+            except Exception as e:
+                logging.error(f"Error in SSE stream: {e}", exc_info=True)
+                yield f"data: {json.dumps({'type': 'error', 'error': 'Fehler bei der Antwortgenerierung'})}\n\n"
             finally:
                 _active_chat_sessions.discard(session_key)
 
@@ -420,25 +429,6 @@ async def chat_endpoint(
             
     async def process_and_save():
         try:
-            # Auto-rename if this is the first message and title is default
-            history = await get_session_history(username, session_id)
-            if not history and session_metadata.get("title") == "Neuer Chat" and message:
-                # Use first 30 chars
-                new_title = (message[:27] + "...") if len(message) > 30 else message
-                await update_session_title(username, session_id, new_title)
-                target_path = get_session_icon_target_path(username, session_id)
-                fire_and_forget(agy_client.generate_chat_icon(new_title, target_path))
-
-            # Save the user's message to history
-            user_msg_data = {
-                "text": display_msg, 
-                "is_user": True,
-                "image_urls": image_urls,
-                "images": images_data if images_data else None,
-                "timestamp": datetime.now(timezone.utc).isoformat()
-            }
-            await save_session_message(username, session_id, user_msg_data)
-
             # Process via agy with FULL context
             user_data_dir = os.path.abspath(os.path.join(DATA_DIR, username, "sessions", session_id, "data"))
             os.makedirs(user_data_dir, exist_ok=True)
