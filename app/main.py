@@ -17,8 +17,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import logging
-log_level = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(level=log_level)
+from .logging_config import setup_logging
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 from .agy_client import agy_client
 from .storage import (
@@ -298,7 +300,7 @@ async def chat_endpoint(
                     with Image.open(io.BytesIO(contents)) as pil_img:
                         width, height = pil_img.size
                 except Exception as e:
-                    logging.warning(f"Could not read image dimensions: {e}")
+                    logger.warning(f"Could not read image dimensions: {e}")
 
                 with open(img_path, "wb") as f:
                     f.write(contents)
@@ -420,7 +422,7 @@ async def chat_endpoint(
 
                 yield f"data: {json.dumps({'type': 'done', 'reply': saved_reply, 'context_truncated': context_truncated, 'timestamp': ai_msg_data['timestamp']})}\n\n"
             except Exception as e:
-                logging.error(f"Error in SSE stream: {e}", exc_info=True)
+                logger.error(f"Error in SSE stream: {e}", exc_info=True)
                 yield f"data: {json.dumps({'type': 'error', 'error': 'Fehler bei der Antwortgenerierung'})}\n\n"
             finally:
                 _active_chat_sessions.discard(session_key)

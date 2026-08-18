@@ -68,10 +68,20 @@ Example `users.json`:
 
 ## Architecture
 - `app/main.py`: The FastAPI application entry point, handling routing, Server-Sent Events (SSE) streaming, and HTTP requests.
+- `app/logging_config.py`: Centralized standard logging configuration with support for human-readable console formatting and structured JSON logging.
 - `app/agy_client.py`: The client wrapper for interacting with the `antigravity-cli` via asynchronous subprocesses (NDJSON streaming via `stream-json`).
 - `app/storage.py`: Handles saving the structured parsed data locally.
 - `app/static/`: Contains the frontend assets (`index.html`, `app.js`, `styles.css`) for progressive stream rendering and responsive UI.
 - `docker-compose.yml`: Defines the services and volume mappings for the Docker environment.
+
+## Configuration & Logging
+
+RememberBot supports the following environment variables:
+- `DATA_DIR`: Directory path for persistent data (default: `/app/data`).
+- `LOG_LEVEL`: Log severity level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` - default: `INFO`).
+- `LOG_FORMAT`: Format of log messages:
+  - `text` (default): Human-readable formatted console output (`YYYY-MM-DD HH:MM:SS [LEVEL] logger (file:line) - message`).
+  - `json`: Structured NDJSON format for log aggregators (e.g., Loki, ELK, CloudWatch).
 
 ## CI/CD Pipeline
 

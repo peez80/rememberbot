@@ -3,9 +3,12 @@ import json
 import uuid
 import shutil
 import time
+import logging
 from datetime import datetime, timezone
 import asyncio
 from collections import defaultdict
+
+logger = logging.getLogger(__name__)
 
 # Locks for session concurrency to prevent race conditions during read-modify-write
 session_locks = defaultdict(asyncio.Lock)
