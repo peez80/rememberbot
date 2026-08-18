@@ -28,19 +28,21 @@ def test_status_unauthenticated():
     assert response.status_code == 401
 
 
-@patch("app.main.get_sessions")
-def test_session_status_endpoint_idle(mock_get_sessions):
-    mock_get_sessions.return_value = [{"id": "sess-123", "title": "Neuer Chat"}]
+@patch("app.main.check_session_exists")
+def test_session_status_endpoint_idle(mock_exists):
+    mock_exists.return_value = True
     
     response = client.get("/api/sessions/sess-123/status")
     assert response.status_code == 200
     assert response.json() == {"id": "sess-123", "is_processing": False}
 
 
-@patch("app.main.get_sessions")
+@patch("app.main.get_session_title")
+@patch("app.main.check_session_exists")
 @patch("app.main.get_session_history")
-def test_history_header_idle(mock_get_history, mock_get_sessions):
-    mock_get_sessions.return_value = [{"id": "sess-123", "title": "Neuer Chat"}]
+def test_history_header_idle(mock_get_history, mock_exists, mock_title):
+    mock_exists.return_value = True
+    mock_title.return_value = "Neuer Chat"
     mock_get_history.return_value = [{"text": "Hello", "is_user": True, "image_urls": [], "images": None, "timestamp": None}]
     
     response = client.get("/api/sessions/sess-123/history")
@@ -48,24 +50,26 @@ def test_history_header_idle(mock_get_history, mock_get_sessions):
     assert response.headers.get("X-Is-Processing") == "false"
 
 
-@patch("app.main.get_sessions")
-def test_session_status_not_found(mock_get_sessions):
-    mock_get_sessions.return_value = [{"id": "sess-123", "title": "Neuer Chat"}]
+@patch("app.main.check_session_exists")
+def test_session_status_not_found(mock_exists):
+    mock_exists.return_value = False
     
     response = client.get("/api/sessions/unknown-session/status")
     assert response.status_code == 404
 
 
-@patch("app.main.get_sessions")
+@patch("app.main.agy_client")
 @patch("app.main.get_session_history")
 @patch("app.main.save_session_message")
+@patch("app.main.get_session_title")
+@patch("app.main.check_session_exists")
 @patch("app.main.get_session_settings")
-@patch("app.main.agy_client")
 @pytest.mark.asyncio
 async def test_session_status_endpoint_processing(
-    mock_agy_client, mock_get_settings, mock_save_msg, mock_get_history, mock_get_sessions
+    mock_get_settings, mock_exists, mock_title, mock_save_msg, mock_get_history, mock_agy_client
 ):
-    mock_get_sessions.return_value = [{"id": "sess-123", "title": "Neuer Chat"}]
+    mock_exists.return_value = True
+    mock_title.return_value = "Neuer Chat"
     mock_get_history.return_value = []
     mock_get_settings.return_value = {"prompt": "", "include_gps": False}
     
@@ -123,19 +127,18 @@ async def test_session_status_endpoint_processing(
         assert history_after.headers.get("X-Is-Processing") == "false"
 
 
-@patch("app.main.get_sessions")
+@patch("app.main.agy_client")
 @patch("app.main.get_session_history")
 @patch("app.main.save_session_message")
+@patch("app.main.get_session_title")
+@patch("app.main.check_session_exists")
 @patch("app.main.get_session_settings")
-@patch("app.main.agy_client")
 @pytest.mark.asyncio
 async def test_session_status_multi_session_concurrency(
-    mock_agy_client, mock_get_settings, mock_save_msg, mock_get_history, mock_get_sessions
+    mock_get_settings, mock_exists, mock_title, mock_save_msg, mock_get_history, mock_agy_client
 ):
-    mock_get_sessions.return_value = [
-        {"id": "sess-1", "title": "Neuer Chat"},
-        {"id": "sess-2", "title": "Neuer Chat"}
-    ]
+    mock_exists.return_value = True
+    mock_title.return_value = "Neuer Chat"
     mock_get_history.return_value = []
     mock_get_settings.return_value = {"prompt": "", "include_gps": False}
 
@@ -174,16 +177,18 @@ async def test_session_status_multi_session_concurrency(
         assert res1_after.json()["is_processing"] is False
 
 
-@patch("app.main.get_sessions")
+@patch("app.main.agy_client")
 @patch("app.main.get_session_history")
 @patch("app.main.save_session_message")
+@patch("app.main.get_session_title")
+@patch("app.main.check_session_exists")
 @patch("app.main.get_session_settings")
-@patch("app.main.agy_client")
 @pytest.mark.asyncio
 async def test_session_status_cleanup_on_error(
-    mock_agy_client, mock_get_settings, mock_save_msg, mock_get_history, mock_get_sessions
+    mock_get_settings, mock_exists, mock_title, mock_save_msg, mock_get_history, mock_agy_client
 ):
-    mock_get_sessions.return_value = [{"id": "sess-123", "title": "Neuer Chat"}]
+    mock_exists.return_value = True
+    mock_title.return_value = "Neuer Chat"
     mock_get_history.return_value = []
     mock_get_settings.return_value = {"prompt": "", "include_gps": False}
 

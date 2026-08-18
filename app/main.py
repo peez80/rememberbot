@@ -29,7 +29,8 @@ from .storage import (
     save_session_message, update_session_title, delete_session,
     get_session_settings, update_session_settings, init_user_storage,
     get_session_icon_path, get_session_icon_target_path,
-    cleanup_deleted_sessions
+    cleanup_deleted_sessions,
+    check_session_exists, get_session_title, generate_thumbnail
 )
 
 app = FastAPI(title="RememberBot")
@@ -167,9 +168,7 @@ async def get_sessions_endpoint(username: str = Depends(get_current_user)):
 
 @app.get("/api/sessions/{session_id}/status")
 async def get_session_status_endpoint(session_id: str, username: str = Depends(get_current_user)):
-    sessions = await get_sessions(username)
-    session_metadata = next((s for s in sessions if s["id"] == session_id), None)
-    if not session_metadata:
+    if not await check_session_exists(username, session_id):
         raise HTTPException(status_code=404, detail="Session not found")
         
     is_processing = (username, session_id) in _active_chat_sessions
@@ -177,18 +176,15 @@ async def get_session_status_endpoint(session_id: str, username: str = Depends(g
 
 @app.get("/api/sessions/{session_id}/history", response_model=List[ChatMessage])
 async def get_history_endpoint(session_id: str, response: Response, username: str = Depends(get_current_user)):
-    sessions = await get_sessions(username)
-    session_metadata = next((s for s in sessions if s["id"] == session_id), None)
-    if not session_metadata:
+    if not await check_session_exists(username, session_id):
         raise HTTPException(status_code=404, detail="Session not found")
         
     history = await get_session_history(username, session_id)
     if get_session_icon_path(username, session_id) is None:
-        sessions = await get_sessions(username)
-        session_metadata = next((s for s in sessions if s["id"] == session_id), None)
-        if session_metadata and session_metadata.get("title") != "Neuer Chat":
+        title = await get_session_title(username, session_id)
+        if title and title != "Neuer Chat":
             target_path = get_session_icon_target_path(username, session_id)
-            fire_and_forget(agy_client.generate_chat_icon(session_metadata["title"], target_path))
+            fire_and_forget(agy_client.generate_chat_icon(title, target_path))
             
     is_processing = (username, session_id) in _active_chat_sessions
     response.headers["X-Is-Processing"] = "true" if is_processing else "false"
@@ -203,9 +199,7 @@ async def get_session_icon(session_id: str, username: str = Depends(get_current_
 
 @app.delete("/api/sessions/{session_id}")
 async def delete_session_endpoint(session_id: str, username: str = Depends(get_current_user)):
-    sessions = await get_sessions(username)
-    session_metadata = next((s for s in sessions if s["id"] == session_id), None)
-    if not session_metadata:
+    if not await check_session_exists(username, session_id):
         raise HTTPException(status_code=404, detail="Session not found")
         
     await delete_session(username, session_id)
@@ -217,9 +211,7 @@ class SessionSettingsRequest(BaseModel):
 
 @app.get("/api/sessions/{session_id}/settings")
 async def get_settings_endpoint(session_id: str, username: str = Depends(get_current_user)):
-    sessions = await get_sessions(username)
-    session_metadata = next((s for s in sessions if s["id"] == session_id), None)
-    if not session_metadata:
+    if not await check_session_exists(username, session_id):
         raise HTTPException(status_code=404, detail="Session not found")
         
     settings = await get_session_settings(username, session_id)
@@ -227,9 +219,7 @@ async def get_settings_endpoint(session_id: str, username: str = Depends(get_cur
 
 @app.put("/api/sessions/{session_id}/settings")
 async def update_settings_endpoint(session_id: str, req: SessionSettingsRequest, username: str = Depends(get_current_user)):
-    sessions = await get_sessions(username)
-    session_metadata = next((s for s in sessions if s["id"] == session_id), None)
-    if not session_metadata:
+    if not await check_session_exists(username, session_id):
         raise HTTPException(status_code=404, detail="Session not found")
         
     await update_session_settings(username, session_id, req.prompt, req.include_gps)
@@ -240,9 +230,7 @@ class SessionTitleRequest(BaseModel):
 
 @app.put("/api/sessions/{session_id}/title")
 async def update_title_endpoint(session_id: str, req: SessionTitleRequest, username: str = Depends(get_current_user)):
-    sessions = await get_sessions(username)
-    session_metadata = next((s for s in sessions if s["id"] == session_id), None)
-    if not session_metadata:
+    if not await check_session_exists(username, session_id):
         raise HTTPException(status_code=404, detail="Session not found")
         
     await update_session_title(username, session_id, req.title)
@@ -261,9 +249,7 @@ async def chat_endpoint(
     username: str = Depends(get_current_user)
 ):
     # Verify session exists
-    sessions = await get_sessions(username)
-    session_metadata = next((s for s in sessions if s["id"] == session_id), None)
-    if not session_metadata:
+    if not await check_session_exists(username, session_id):
         raise HTTPException(status_code=404, detail="Session not found")
 
     session_key = (username, session_id)
@@ -333,12 +319,14 @@ async def chat_endpoint(
     await save_session_message(username, session_id, user_msg_data)
 
     # Auto-rename if this is the first message and title is default
-    if is_first_message and session_metadata.get("title") == "Neuer Chat":
-        title_source = message if message else "Foto-Notiz"
-        new_title = (title_source[:27] + "...") if len(title_source) > 30 else title_source
-        await update_session_title(username, session_id, new_title)
-        target_path = get_session_icon_target_path(username, session_id)
-        fire_and_forget(agy_client.generate_chat_icon(new_title, target_path))
+    if is_first_message:
+        current_title = await get_session_title(username, session_id)
+        if current_title == "Neuer Chat":
+            title_source = message if message else "Foto-Notiz"
+            new_title = (title_source[:27] + "...") if len(title_source) > 30 else title_source
+            await update_session_title(username, session_id, new_title)
+            target_path = get_session_icon_target_path(username, session_id)
+            fire_and_forget(agy_client.generate_chat_icon(new_title, target_path))
 
     is_stream = stream.lower() == "true" or "text/event-stream" in request.headers.get("accept", "")
 
@@ -554,5 +542,38 @@ async def get_upload(session_id: str, filename: str, username: str = Depends(get
     safe_session_id = os.path.basename(session_id)
     file_path = os.path.join(DATA_DIR, username, "sessions", safe_session_id, "uploads", safe_filename)
     if os.path.exists(file_path):
-        return FileResponse(file_path)
+        return FileResponse(
+            file_path,
+            headers={"Cache-Control": "public, max-age=31536000, immutable"}
+        )
     raise HTTPException(status_code=404, detail="File not found")
+
+# Secure Thumbnails Endpoint
+@app.get("/uploads/{session_id}/thumbnails/{filename}")
+async def get_thumbnail(session_id: str, filename: str, username: str = Depends(get_current_user)):
+    safe_filename = os.path.basename(filename)
+    safe_session_id = os.path.basename(session_id)
+    thumb_dir = os.path.join(DATA_DIR, username, "sessions", safe_session_id, "thumbnails")
+    thumb_path = os.path.join(thumb_dir, safe_filename)
+    
+    if os.path.exists(thumb_path):
+        return FileResponse(
+            thumb_path,
+            headers={"Cache-Control": "public, max-age=31536000, immutable"}
+        )
+        
+    orig_path = os.path.join(DATA_DIR, username, "sessions", safe_session_id, "uploads", safe_filename)
+    if not os.path.exists(orig_path):
+        raise HTTPException(status_code=404, detail="Image not found")
+        
+    success = await asyncio.to_thread(generate_thumbnail, orig_path, thumb_path)
+    if success and os.path.exists(thumb_path):
+        return FileResponse(
+            thumb_path,
+            headers={"Cache-Control": "public, max-age=31536000, immutable"}
+        )
+    # Fallback to original if thumbnail generation failed (e.g. non-image or SVG)
+    return FileResponse(
+        orig_path,
+        headers={"Cache-Control": "public, max-age=31536000, immutable"}
+    )

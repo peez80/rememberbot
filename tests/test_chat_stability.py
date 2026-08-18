@@ -41,17 +41,19 @@ def run_around_tests():
     clear_mock_auth()
 
 
-@patch("app.main.get_sessions")
+@patch("app.main.agy_client")
 @patch("app.main.get_session_history")
 @patch("app.main.save_session_message")
+@patch("app.main.get_session_title")
+@patch("app.main.check_session_exists")
 @patch("app.main.get_session_settings")
-@patch("app.main.agy_client")
 @pytest.mark.asyncio
 async def test_session_marked_processing_immediately(
-    mock_agy_client, mock_get_settings, mock_save_msg, mock_get_history, mock_get_sessions
+    mock_get_settings, mock_exists, mock_title, mock_save_msg, mock_get_history, mock_agy_client
 ):
     """Verify that _active_chat_sessions contains the session as soon as chat endpoint starts."""
-    mock_get_sessions.return_value = [{"id": "sess-fast", "title": "Neuer Chat"}]
+    mock_exists.return_value = True
+    mock_title.return_value = "Neuer Chat"
     mock_get_history.return_value = []
     mock_get_settings.return_value = {"prompt": "", "include_gps": False}
 

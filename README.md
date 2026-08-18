@@ -19,12 +19,14 @@ I loved the agentic behavior of the `gemini` / `antigravity` CLI, and I wanted t
 ## Features
 - **Conversational Interface**: Interact with your AI agent just by chatting.
 - **Real-Time Live Streaming**: Experience smooth token-by-token output streaming powered by `agy --output-format stream-json` and Server-Sent Events (SSE).
+- **High-Performance Chat Loading**: Lightning-fast session switching with progressive rendering (20-message initial batch with seamless infinite scroll) and $O(1)$ direct session lookup.
+- **Automatic Thumbnail Generation & Caching**: Fast image loading with on-demand generated thumbnails (max 400px, EXIF-transposed, transparent-safe JPEG), long-term HTTP caching (`immutable`), and full-resolution viewing in a new tab.
 - **Advanced Image Support**: Upload pictures (with or without text captions) for automatic recognition and processing. On mobile devices, you can use your camera directly to snap and upload photos.
 - **Smart Parsing**: Powered by Google's Gemini models via the `antigravity-cli`, extracting structured data automatically.
 - **Responsive Web App**: Built with vanilla HTML/JS/CSS for a fast, responsive user experience.
 
 ## Tech Stack
-- **Backend**: Python, FastAPI
+- **Backend**: Python, FastAPI, Pillow
 - **Frontend**: HTML, CSS, JavaScript (Vanilla)
 - **AI Integration**: `antigravity-cli` (`agy`)
 - **Containerization**: Docker, Docker Compose
@@ -67,11 +69,11 @@ Example `users.json`:
 > **Security Note:** Passwords are currently stored in plain text. This authentication mechanism is intended for local or personal use only. Do not use this in a public-facing or production environment without adding proper password hashing.
 
 ## Architecture
-- `app/main.py`: The FastAPI application entry point, handling routing, Server-Sent Events (SSE) streaming, and HTTP requests.
+- `app/main.py`: The FastAPI application entry point, handling routing, thumbnail generation endpoints, Server-Sent Events (SSE) streaming, and HTTP requests.
 - `app/logging_config.py`: Centralized standard logging configuration with support for human-readable console formatting and structured JSON logging.
 - `app/agy_client.py`: The client wrapper for interacting with the `antigravity-cli` via asynchronous subprocesses (NDJSON streaming via `stream-json`).
-- `app/storage.py`: Handles saving the structured parsed data locally.
-- `app/static/`: Contains the frontend assets (`index.html`, `app.js`, `styles.css`) for progressive stream rendering and responsive UI.
+- `app/storage.py`: Handles saving the structured parsed data locally, session metadata, thumbnail creation, and file storage.
+- `app/static/`: Contains the frontend assets (`index.html`, `app.js`, `styles.css`) for progressive stream rendering, infinite scroll history loading, and responsive UI.
 - `docker-compose.yml`: Defines the services and volume mappings for the Docker environment.
 
 ## Configuration & Logging
@@ -111,10 +113,10 @@ docker-compose run --rm web pytest tests/
 
 
 This will run all tests (both unit tests and Playwright E2E browser tests) together:
-- Local storage logic (`tests/test_storage.py`)
-- API endpoints and chat behavior (`tests/test_main.py`, `tests/test_thinking_status.py`, `tests/test_chat_stability.py`, `tests/test_streaming.py`)
+- Local storage logic, thumbnail creation & $O(1)$ session lookups (`tests/test_storage.py`, `tests/test_performance_storage.py`)
+- API endpoints, upload thumbnail routing & caching headers (`tests/test_main.py`, `tests/test_upload_thumbnails_and_caching.py`, `tests/test_thinking_status.py`, `tests/test_chat_stability.py`, `tests/test_streaming.py`)
+- Progressive rendering, thumbnail links & infinite scroll integrity (`tests/test_progressive_rendering.py`, `tests/test_scroll_button.py`)
 - `agy` CLI interaction, streaming and JSON parsing (`tests/test_agy_client.py`, `tests/test_streaming.py`)
-- UI component static asset integrity (`tests/test_scroll_button.py`)
 - End-to-End browser UI interactions, concurrency and live streaming via Playwright (`tests/test_scroll_e2e.py`, `tests/test_thinking_animation_e2e.py`, `tests/test_visibility_sync_e2e.py`, `tests/test_chat_stability.py`, `tests/test_ui_concurrency_e2e.py`, `tests/test_streaming.py`)
 
 To run only the Playwright E2E browser tests:

@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, timezone
 import asyncio
 from collections import defaultdict
+from PIL import Image, ImageOps
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +34,45 @@ def init_session_storage(username: str, session_id: str):
     session_dir = os.path.join(DATA_DIR, username, "sessions", session_id)
     os.makedirs(session_dir, exist_ok=True)
     os.makedirs(os.path.join(session_dir, "uploads"), exist_ok=True)
+    os.makedirs(os.path.join(session_dir, "thumbnails"), exist_ok=True)
     os.makedirs(os.path.join(session_dir, "data"), exist_ok=True)
 
 
 # --- Session Management ---
+
+def session_exists(username: str, session_id: str) -> bool:
+    """Check if a session exists in O(1) without listing all user sessions."""
+    safe_session_id = os.path.basename(session_id)
+    return os.path.isfile(get_session_filepath(username, safe_session_id))
+
+async def check_session_exists(username: str, session_id: str) -> bool:
+    """Async wrapper for session_exists."""
+    return await asyncio.to_thread(session_exists, username, session_id)
+
+def generate_thumbnail(source_path: str, target_path: str, max_dimension: int = 400) -> bool:
+    """
+    Generate an optimized thumbnail from source_path and save to target_path.
+    Handles EXIF orientation and RGBA transparency.
+    """
+    try:
+        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+        with Image.open(source_path) as img:
+            img = ImageOps.exif_transpose(img)
+            if img.mode in ("RGBA", "LA", "P"):
+                bg = Image.new("RGB", img.size, (255, 255, 255))
+                if img.mode == "RGBA":
+                    bg.paste(img, mask=img.split()[3])
+                else:
+                    bg.paste(img.convert("RGBA"), mask=img.convert("RGBA").split()[3])
+                img = bg
+            elif img.mode != "RGB":
+                img = img.convert("RGB")
+            img.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+            img.save(target_path, "JPEG", quality=80, optimize=True)
+            return True
+    except Exception as e:
+        logger.warning(f"Failed to generate thumbnail for {source_path}: {e}")
+        return False
 
 def get_session_filepath(username: str, session_id: str) -> str:
     # Basic protection against path traversal
@@ -165,6 +201,21 @@ def _sync_update_session_title(username: str, session_id: str, new_title: str):
 async def update_session_title(username: str, session_id: str, new_title: str):
     async with session_locks[session_id]:
         await asyncio.to_thread(_sync_update_session_title, username, session_id, new_title)
+
+def _sync_get_session_title(username: str, session_id: str) -> str:
+    filepath = get_session_filepath(username, session_id)
+    if not os.path.exists(filepath):
+        return "Chat"
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data.get("title", "Chat")
+    except Exception:
+        return "Chat"
+
+async def get_session_title(username: str, session_id: str) -> str:
+    async with session_locks[session_id]:
+        return await asyncio.to_thread(_sync_get_session_title, username, session_id)
 
 def _sync_delete_session(username: str, session_id: str):
     filepath = get_session_filepath(username, session_id)

@@ -655,6 +655,20 @@ body {
     margin-top: 0.5rem;
 }
 
+.chat-image-link {
+    display: inline-block;
+    text-decoration: none;
+    border-radius: 0.5rem;
+    overflow: hidden;
+    cursor: pointer;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.chat-image-link:hover {
+    opacity: 0.92;
+    transform: scale(1.02);
+}
+
 .chat-image {
     max-width: 100%;
     border-radius: 0.5rem;

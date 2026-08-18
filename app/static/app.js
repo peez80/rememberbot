@@ -43,6 +43,11 @@ document.addEventListener("DOMContentLoaded", () => {
     let currentSessionGpsEnabled = false;
     let activeSubmittingSessionId = null;
 
+    const MESSAGE_BATCH_SIZE = 20;
+    let currentSessionHistory = [];
+    let currentRenderStartIndex = 0;
+    let isPrependingMessages = false;
+
     const scrollToBottomBtn = document.getElementById("scroll-to-bottom-btn");
 
     // Toggle Sidebar Mobile
@@ -64,7 +69,34 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     };
 
-    chatContainer.addEventListener("scroll", checkScrollPosition);
+    // Handle scroll for bottom button and progressive loading of older messages
+    const handleChatScroll = () => {
+        checkScrollPosition();
+
+        if (chatContainer.scrollTop < 100 && currentRenderStartIndex > 0 && !isPrependingMessages) {
+            isPrependingMessages = true;
+            const nextStartIndex = Math.max(0, currentRenderStartIndex - MESSAGE_BATCH_SIZE);
+            const olderMessages = currentSessionHistory.slice(nextStartIndex, currentRenderStartIndex);
+            
+            if (olderMessages.length > 0) {
+                const fragment = document.createDocumentFragment();
+                olderMessages.forEach(msg => {
+                    const msgDiv = createMessageElement(msg.text, msg.is_user, msg.images || msg.image_urls || [], msg.timestamp, true, true, false);
+                    fragment.appendChild(msgDiv);
+                });
+
+                const oldScrollHeight = chatContainer.scrollHeight;
+                chatContainer.prepend(fragment);
+                const newScrollHeight = chatContainer.scrollHeight;
+                chatContainer.scrollTop += (newScrollHeight - oldScrollHeight);
+
+                currentRenderStartIndex = nextStartIndex;
+            }
+            isPrependingMessages = false;
+        }
+    };
+
+    chatContainer.addEventListener("scroll", handleChatScroll);
 
     // Scroll to bottom
     const scrollToBottom = (smooth = false) => {
@@ -136,8 +168,8 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     };
 
-    // Append a message to the chat
-    const appendMessage = (text, isUser, imagesData = [], timestampStr = null, skipScroll = false, smoothScroll = false, isHistory = false) => {
+    // Create DOM element for a message
+    const createMessageElement = (text, isUser, imagesData = [], timestampStr = null, isHistory = false, skipScroll = false, smoothScroll = false) => {
         const msgDiv = document.createElement("div");
         msgDiv.className = `message ${isUser ? "user-message" : "ai-message"} ${isHistory ? "history-message" : "new-message"}`;
 
@@ -175,22 +207,43 @@ document.addEventListener("DOMContentLoaded", () => {
             const gridDiv = document.createElement("div");
             gridDiv.className = "chat-images-grid";
             imagesData.forEach(imgData => {
-                const img = document.createElement("img");
+                let originalUrl = '';
                 let hasDimensions = false;
+                let width = null, height = null;
                 
                 if (typeof imgData === 'string') {
-                    img.src = imgData;
+                    originalUrl = imgData;
                 } else if (imgData && imgData.url) {
-                    img.src = imgData.url;
+                    originalUrl = imgData.url;
                     if (imgData.width && imgData.height) {
-                        img.width = imgData.width;
-                        img.height = imgData.height;
+                        width = imgData.width;
+                        height = imgData.height;
                         hasDimensions = true;
                     }
                 } else {
                     return;
                 }
                 
+                // If it's an uploaded image, use the /thumbnails/ endpoint for preview
+                let thumbUrl = originalUrl;
+                const uploadMatch = originalUrl.match(/^\/uploads\/([^/]+)\/(.+)$/);
+                if (uploadMatch && !originalUrl.includes('/thumbnails/')) {
+                    thumbUrl = `/uploads/${uploadMatch[1]}/thumbnails/${uploadMatch[2]}`;
+                }
+                
+                const link = document.createElement("a");
+                link.href = originalUrl;
+                link.target = "_blank";
+                link.rel = "noopener noreferrer";
+                link.className = "chat-image-link";
+                link.title = "Bild in neuem Tab öffnen";
+                
+                const img = document.createElement("img");
+                img.src = thumbUrl;
+                if (hasDimensions) {
+                    img.width = width;
+                    img.height = height;
+                }
                 img.alt = "Angehängtes Bild";
                 img.className = "chat-image";
                 img.loading = "lazy";
@@ -217,7 +270,8 @@ document.addEventListener("DOMContentLoaded", () => {
                         chatContainer.scrollTop += deltaHeight;
                     }
                 };
-                gridDiv.appendChild(img);
+                link.appendChild(img);
+                gridDiv.appendChild(link);
             });
             bubble.appendChild(gridDiv);
         }
@@ -227,6 +281,12 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         msgDiv.appendChild(bubble);
+        return msgDiv;
+    };
+
+    // Append a message to the chat
+    const appendMessage = (text, isUser, imagesData = [], timestampStr = null, skipScroll = false, smoothScroll = false, isHistory = false) => {
+        const msgDiv = createMessageElement(text, isUser, imagesData, timestampStr, isHistory, skipScroll, smoothScroll);
         chatContainer.appendChild(msgDiv);
         
         if (!skipScroll) {
@@ -551,12 +611,16 @@ document.addEventListener("DOMContentLoaded", () => {
             if (currentSessionId !== sessionId) return;
 
             chatContainer.innerHTML = '';
-            if (history && history.length > 0) {
-                history.forEach(msg => {
+            currentSessionHistory = history || [];
+            if (currentSessionHistory.length > 0) {
+                currentRenderStartIndex = Math.max(0, currentSessionHistory.length - MESSAGE_BATCH_SIZE);
+                const initialBatch = currentSessionHistory.slice(currentRenderStartIndex);
+                initialBatch.forEach(msg => {
                     appendMessage(msg.text, msg.is_user, msg.images || msg.image_urls || [], msg.timestamp, true, false, true);
                 });
                 scrollToBottom(false);
             } else if (!isProcessing && activeSubmittingSessionId !== sessionId) {
+                currentRenderStartIndex = 0;
                 showInitialGreeting();
             }
 
@@ -766,6 +830,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const now = new Date().toISOString();
         appendMessage(displayMsg, true, localImageUrls, now, false, true, false);
+        currentSessionHistory.push({
+            text: displayMsg,
+            is_user: true,
+            images: localImageUrls,
+            timestamp: now
+        });
 
         // Prepare form data
         const formData = new FormData();
@@ -884,6 +954,12 @@ document.addEventListener("DOMContentLoaded", () => {
                                             }
                                             attachDownloadButtons(bubbleDiv, event.reply || accumulatedText);
                                         }
+                                        currentSessionHistory.push({
+                                            text: event.reply || accumulatedText,
+                                            is_user: false,
+                                            images: [],
+                                            timestamp: event.timestamp || new Date().toISOString()
+                                        });
                                         if (event.context_truncated) {
                                             contextWarning.style.display = "flex";
                                         }
@@ -923,6 +999,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (currentSessionId !== submittedSessionId) return;
 
                 appendMessage(data.reply, false, [], data.timestamp, false, true, false);
+                currentSessionHistory.push({
+                    text: data.reply,
+                    is_user: false,
+                    images: [],
+                    timestamp: data.timestamp || new Date().toISOString()
+                });
 
                 if (data.context_truncated) {
                     contextWarning.style.display = "flex";
