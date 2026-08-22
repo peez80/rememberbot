@@ -10,11 +10,12 @@ Die Anwendung ist ein generischer, agentischer KI-Chat mit persistentem Gedächt
 - Der Benutzer kann hier wie in einer Messenger-App Eingaben tätigen und sieht den Verlauf.
 - **Responsive Layout:** Die Chat-Oberfläche muss sowohl auf Desktop-Rechnern als auch auf mobilen Endgeräten (Smartphones, Tablets) optimal dargestellt werden und nutzbar sein.
 
-### 2.2 Dateneingabe und Logging
+### 2.2 Dateneingabe, Logging und Datei-Uploads
 - **Texteingabe:** Der Benutzer kann in natürlicher Sprache beliebige Informationen eingeben, die der Agent verarbeiten und speichern soll.
-- **Kamera-Integration (Smartphone):** Öffnet der Benutzer die Web-App auf dem Smartphone, kann er direkt über die Kamerafunktion Fotos aufnehmen (z.B. von Dokumenten, Gegenständen oder Mahlzeiten).
-- **Foto-Upload (Galerie/Dateisystem):** Zusätzlich können bereits vorhandene Fotos direkt in den Chat hochgeladen werden.
-- Bei Bildeingaben wird die KI genutzt, um die Fotos zu analysieren und strukturierte Daten automatisch zu extrahieren.
+- **Dateianhänge (Universal File Upload):** Über einen Büroklammer-Button (`[ 📎 ]`), Drag-and-Drop oder die Zwischenablage (Paste) können beliebige Dateien (PDFs, Text-/Code-Dateien, CSVs, Tabellen, Archive etc.) in den Kontext geladen werden. Der KI-Agent erhält die absoluten Dateipfade und kann den Dateiinhalt mit Tools inspizieren und auswerten.
+- **Kamera-Integration (Smartphone):** Öffnet der Benutzer die Web-App auf dem Smartphone, kann er direkt über den Kamera-Button (`[ 📷 ]`) Fotos aufnehmen (z.B. von Dokumenten, Gegenständen oder Mahlzeiten).
+- **Foto-Upload (Galerie):** Über den Galerie-Button (`[ 🖼️ ]`) können gezielt Fotos und Grafiken ausgewählt und hochgeladen werden.
+- Bei Bildeingaben wird die KI genutzt, um die Fotos zu analysieren und strukturierte Daten automatisch zu extrahieren. Nicht-Bilddateien werden als herunterladbare Dateikarten im Chatverlauf angezeigt.
 
 ### 2.3 Datenkorrelation und Kontext
 - Der Benutzer kann über den Chat komplexe Zusammenhänge erfassen und abfragen.
@@ -50,10 +51,11 @@ Die Anwendung ist ein generischer, agentischer KI-Chat mit persistentem Gedächt
   - Die KI-Generierung (`stream_message`), Nachbearbeitung (Markdown-Link-Korrektur, `<thought>`-Gedankengänge) und Speicherung (`save_session_message`) laufen in einem eigenständigen, entkoppelten `asyncio.Task` im Hintergrund (`_active_tasks`).
   - Der SSE-Endpoint konsumiert Tokens aus einer `asyncio.Queue`. Schließt der Benutzer den Browser/Tab, bricht nur die SSE-Verbindung ab – der Hintergrund-Task läuft zuverlässig bis zum Ende durch, speichert die vollständige KI-Antwort in `session.json` und hält den Status `is_processing: true` in `_active_chat_sessions` bis zur Fertigstellung aktiv.
   - Bei erneuter Sitzungsauswahl oder Reconnect erkennt das Frontend den Hintergrundstatus via Polling und lädt die Antwort nahtlos nach.
-- **Bildverarbeitung, Uploads & Thumbnail-Caching:**
-  - Hochgeladene Bilder werden persistent im Upload-Ordner der Session gespeichert (`/uploads/{session_id}/{filename}`) und als Bildpfade an `agy` übergeben. Mobile Kamera-Uploads ohne Dateiendung erhalten automatisch einen sicheren `.jpg`-Fallback.
+- **Datei- & Bildverarbeitung, Uploads & Thumbnail-Caching:**
+  - Hochgeladene Dateien und Bilder werden persistent im Upload-Ordner der Session gespeichert (`/uploads/{session_id}/{unique_filename}`) mit kollisionssicherem UUID-Präfix und als strukturierte Dateipfade an `agy` übergeben. Mobile Kamera-Uploads ohne Dateiendung erhalten automatisch einen sicheren Bild-Fallback.
+  - Über `/uploads/{session_id}/{filename}` können hochgeladene Dateien mit bereinigtem Originalnamen (`Content-Disposition: attachment; filename=...`) heruntergeladen werden.
   - Bild-Uploads und Thumbnails werden mit aggressiven HTTP-Cache-Headern (`Cache-Control: public, max-age=31536000, immutable`) ausgeliefert.
-  - **On-Demand Thumbnails:** Über `/uploads/{session_id}/thumbnails/{filename}` werden dynamisch und idempotent optimierte Web-Thumbnails (max. 400px, JPEG Quality 80, EXIF-Transposition & Alpha-Kanal-Kompensierung) generiert und in einem separaten `thumbnails/`-Unterordner abgelegt. Thumbnails können jederzeit gefahrlos gelöscht und bei Bedarf neu erzeugt werden. Im Chat klickt der Nutzer auf das Thumbnail, um das Originalbild in einem neuen Tab (`_blank`) zu öffnen.
+  - **On-Demand Thumbnails:** Über `/uploads/{session_id}/thumbnails/{filename}` werden dynamisch und idempotent optimierte Web-Thumbnails (max. 400px, JPEG Quality 80, EXIF-Transposition & Alpha-Kanal-Kompensierung) generiert und in einem separaten `thumbnails/`-Unterordner abgelegt. Thumbnails können jederzeit gefahrlos gelöscht und bei Bedarf neu erzeugt werden. Im Chat klickt der Nutzer auf das Thumbnail, um das Originalbild in einem neuen Tab (`_blank`) zu öffnen. Nicht-Bilddateien werden als übersichtliche Dateikarten mit Typ-Icon und Downloadlink dargestellt.
 - **Performance & Progressives Chat-Laden:**
   - **O(1) Session-Validierung:** API-Routen und Polling-Ticks validieren Sessions über `check_session_exists` und `get_session_title` per direktem Dateipfad-Check in $O(1)$, anstatt alle vorhandenen Sessions und Chatverläufe mit $O(N \cdot M)$ wiederholt von der Festplatte zu parsen.
   - **Progressives Frontend-Rendering & Infinite Scroll:** Beim Öffnen langer Chats rendert das Frontend sofort die jüngsten 20 Nachrichten und lädt ältere Nachrichten nahtlos nach (Trigger bei `< 100px` vor dem oberen Rand), wodurch DOM-Größe, Layout-Berechnungszeiten und Speicherbedarf minimal bleiben.

@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/styles.css?v=7">
+    <link rel="stylesheet" href="/static/styles.css?v=8">
     <!-- Phosphor Icons for premium aesthetic -->
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
     <!-- Markdown Parsing and Sanitization -->
@@ -72,15 +72,20 @@
                 </div>
                 
                 <form id="chat-form" class="input-form">
-                    <label for="camera-upload" class="icon-button" title="Foto aufnehmen">
-                        <i class="ph-bold ph-camera"></i>
+                    <label for="file-upload" class="icon-button" title="Datei anhängen">
+                        <i class="ph-bold ph-paperclip"></i>
                     </label>
-                    <input type="file" id="camera-upload" accept="image/*" capture="environment" style="display: none;" />
-                    
+                    <input type="file" id="file-upload" multiple style="display: none;" />
+
                     <label for="image-upload" class="icon-button" title="Bild aus Galerie wählen">
                         <i class="ph-bold ph-image"></i>
                     </label>
                     <input type="file" id="image-upload" accept="image/*" multiple style="display: none;" />
+
+                    <label for="camera-upload" class="icon-button" title="Foto aufnehmen">
+                        <i class="ph-bold ph-camera"></i>
+                    </label>
+                    <input type="file" id="camera-upload" accept="image/*" capture="environment" style="display: none;" />
                     
                     <textarea id="message-input" rows="1" placeholder="Nachricht eingeben..."></textarea>
                     
@@ -133,6 +138,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=9"></script>
+    <script src="/static/app.js?v=10"></script>
 </body>
 </html>

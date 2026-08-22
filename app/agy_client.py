@@ -120,7 +120,7 @@ class AgyClient:
                 self._login_process = None
             return False
 
-    def _build_prompt_and_history(self, context_messages: list, new_message: str, image_paths: list = None, system_prompt: str = None, cwd: str = None):
+    def _build_prompt_and_history(self, context_messages: list, new_message: str, image_paths: list = None, attachments: list = None, system_prompt: str = None, cwd: str = None):
         prompt = ""
         if system_prompt:
             prompt += f"<system_instructions>\n{system_prompt}\n</system_instructions>\n\n"
@@ -156,15 +156,33 @@ class AgyClient:
         if new_message:
             prompt += f"User: {new_message}\n"
         else:
-            prompt += f"User: [Bild gesendet]\n"
+            prompt += f"User: [Datei(en) gesendet]\n"
         prompt += "</current_message>\n"
         
         if image_paths:
             prompt += f"\nBitte berücksichtige für die Beantwortung der <current_message> auch diese Bilder: {', '.join(image_paths)}\n"
 
+        if attachments:
+            prompt += "\nDer Benutzer hat folgende Datei(en) an die aktuelle Nachricht angehängt:\n"
+            for att in attachments:
+                if isinstance(att, dict):
+                    name = att.get("name", os.path.basename(att.get("path", "")))
+                    path = att.get("path", "")
+                    size_bytes = att.get("size", 0)
+                    if size_bytes >= 1024 * 1024:
+                        size_str = f"{size_bytes / (1024 * 1024):.1f} MB"
+                    elif size_bytes >= 1024:
+                        size_str = f"{size_bytes / 1024:.1f} KB"
+                    else:
+                        size_str = f"{size_bytes} Bytes"
+                    prompt += f"- Pfad: {path} (Dateiname: {name}, Größe: {size_str})\n"
+                elif isinstance(att, str):
+                    prompt += f"- Pfad: {att} (Dateiname: {os.path.basename(att)})\n"
+            prompt += "Bitte lies bzw. analysiere den Inhalt dieser Datei(en) bei Bedarf, um die Nachricht präzise zu beantworten.\n"
+
         return prompt, history_file_path
 
-    async def stream_message(self, context_messages: list, new_message: str, image_paths: list = None, system_prompt: str = None, cwd: str = None):
+    async def stream_message(self, context_messages: list, new_message: str, image_paths: list = None, attachments: list = None, system_prompt: str = None, cwd: str = None):
         """
         Calls `agy` with `--output-format stream-json` and yields real-time event dictionaries.
         Yields:
@@ -172,7 +190,7 @@ class AgyClient:
             {"type": "done", "reply": "...", "context_truncated": bool, "usage": dict} at completion.
         """
         prompt, history_file_path = self._build_prompt_and_history(
-            context_messages, new_message, image_paths, system_prompt, cwd
+            context_messages, new_message, image_paths, attachments, system_prompt, cwd
         )
 
         cmd = [self.executable_path, "--dangerously-skip-permissions", "--output-format", "stream-json", "--prompt", prompt]
@@ -268,14 +286,14 @@ class AgyClient:
                 except OSError as e:
                     logger.warning(f"Failed to remove temp context file {history_file_path}: {e}")
 
-    async def process_message(self, context_messages: list, new_message: str, image_paths: list = None, system_prompt: str = None, cwd: str = None) -> dict:
+    async def process_message(self, context_messages: list, new_message: str, image_paths: list = None, attachments: list = None, system_prompt: str = None, cwd: str = None) -> dict:
         """
         Calls the `agy` CLI with the provided context, new message, and optional image.
         Returns a dictionary containing the AI's response text.
         """
         context_truncated = False
         prompt, history_file_path = self._build_prompt_and_history(
-            context_messages, new_message, image_paths, system_prompt, cwd
+            context_messages, new_message, image_paths, attachments, system_prompt, cwd
         )
 
         cmd = [self.executable_path, "--dangerously-skip-permissions", "--prompt", prompt]

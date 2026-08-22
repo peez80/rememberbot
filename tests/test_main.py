@@ -71,10 +71,10 @@ def test_get_history_endpoint(mock_history, mock_exists, mock_title, mock_agy):
     mock_agy.generate_chat_icon.side_effect = mock_icon
     mock_exists.return_value = True
     mock_title.return_value = "Test"
-    mock_history.return_value = [{"text": "Hi", "is_user": True, "image_urls": [], "images": None, "timestamp": None}]
+    mock_history.return_value = [{"text": "Hi", "is_user": True, "image_urls": [], "images": None, "files": None, "timestamp": None}]
     response = client.get("/api/sessions/sess-123/history")
     assert response.status_code == 200
-    assert response.json() == [{"text": "Hi", "is_user": True, "image_urls": [], "images": None, "timestamp": None}]
+    assert response.json() == [{"text": "Hi", "is_user": True, "image_urls": [], "images": None, "files": None, "timestamp": None}]
     mock_history.assert_called_once_with("testuser", "sess-123")
 
 @patch("app.main.agy_client")
@@ -366,8 +366,8 @@ def test_chat_endpoint_max_images_limit(mock_exists):
     import base64
     png_data = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=")
     
-    files = [("images", ("test.png", png_data, "image/png")) for _ in range(6)]
+    files = [("images", ("test.png", png_data, "image/png")) for _ in range(11)]
     response = client.post("/api/sessions/sess-limit/chat", data={"message": "Zu viele Bilder"}, files=files)
     assert response.status_code == 400
-    assert "Maximal 5 Bilder erlaubt" in response.json()["error"]
+    assert "Maximal 10 Dateien erlaubt" in response.json()["error"]
 

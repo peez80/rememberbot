@@ -7,6 +7,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const chatContainer = document.getElementById("chat-container");
     const chatForm = document.getElementById("chat-form");
     const messageInput = document.getElementById("message-input");
+    const fileUpload = document.getElementById("file-upload");
     const imageUpload = document.getElementById("image-upload");
     const cameraUpload = document.getElementById("camera-upload");
     const imagePreviewContainer = document.getElementById("image-preview-container");
@@ -38,10 +39,43 @@ document.addEventListener("DOMContentLoaded", () => {
     const closePromptBtn = document.getElementById("close-prompt-btn");
     const savePromptBtn = document.getElementById("save-prompt-btn");
 
-    let selectedImageFiles = [];
+    let selectedFiles = [];
     let currentSessionId = localStorage.getItem("currentSessionId");
     let currentSessionGpsEnabled = false;
     let activeSubmittingSessionId = null;
+
+    // Helper functions for file formatting and types
+    const getFileIconClass = (fileName) => {
+        if (!fileName) return 'ph-file';
+        const ext = fileName.split('.').pop().toLowerCase();
+        if (['pdf'].includes(ext)) return 'ph-file-pdf';
+        if (['txt', 'md', 'rtf', 'log'].includes(ext)) return 'ph-file-text';
+        if (['py', 'js', 'html', 'css', 'json', 'ts', 'java', 'c', 'cpp', 'sh', 'sql', 'yaml', 'yml'].includes(ext)) return 'ph-file-code';
+        if (['csv', 'xlsx', 'xls'].includes(ext)) return 'ph-file-csv';
+        if (['zip', 'tar', 'gz', '7z', 'rar'].includes(ext)) return 'ph-file-archive';
+        if (['mp3', 'wav', 'ogg', 'm4a'].includes(ext)) return 'ph-file-audio';
+        if (['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext)) return 'ph-file-video';
+        if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(ext)) return 'ph-file-image';
+        return 'ph-file';
+    };
+
+    const formatFileSize = (bytes) => {
+        if (!bytes && bytes !== 0) return '';
+        if (bytes >= 1024 * 1024) {
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+        if (bytes >= 1024) {
+            return (bytes / 1024).toFixed(1) + ' KB';
+        }
+        return bytes + ' B';
+    };
+
+    const isImageFile = (fileOrName) => {
+        if (!fileOrName) return false;
+        if (typeof fileOrName === 'object' && fileOrName.type && fileOrName.type.startsWith('image/')) return true;
+        const name = typeof fileOrName === 'object' ? fileOrName.name : fileOrName;
+        return /\.(jpe?g|png|webp|gif|bmp|svg)$/i.test(name || '') || name === 'blob';
+    };
 
     const MESSAGE_BATCH_SIZE = 20;
     let currentSessionHistory = [];
@@ -81,7 +115,11 @@ document.addEventListener("DOMContentLoaded", () => {
             if (olderMessages.length > 0) {
                 const fragment = document.createDocumentFragment();
                 olderMessages.forEach(msg => {
-                    const msgDiv = createMessageElement(msg.text, msg.is_user, msg.images || msg.image_urls || [], msg.timestamp, true, true, false);
+                    const msgFiles = msg.files || [];
+                    const msgImages = (msg.images || msg.image_urls || []).length > 0 
+                        ? (msg.images || msg.image_urls) 
+                        : msgFiles.filter(f => f.is_image);
+                    const msgDiv = createMessageElement(msg.text, msg.is_user, msgImages, msg.timestamp, true, true, false, msgFiles);
                     fragment.appendChild(msgDiv);
                 });
 
@@ -169,7 +207,7 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     // Create DOM element for a message
-    const createMessageElement = (text, isUser, imagesData = [], timestampStr = null, isHistory = false, skipScroll = false, smoothScroll = false) => {
+    const createMessageElement = (text, isUser, imagesData = [], timestampStr = null, isHistory = false, skipScroll = false, smoothScroll = false, filesData = []) => {
         const msgDiv = document.createElement("div");
         msgDiv.className = `message ${isUser ? "user-message" : "ai-message"} ${isHistory ? "history-message" : "new-message"}`;
 
@@ -276,6 +314,47 @@ document.addEventListener("DOMContentLoaded", () => {
             bubble.appendChild(gridDiv);
         }
 
+        // Render non-image file attachments in chat-attachments-list
+        const nonImageFiles = (filesData || []).filter(f => f && !f.is_image);
+        if (nonImageFiles.length > 0) {
+            const attList = document.createElement("div");
+            attList.className = "chat-attachments-list";
+            nonImageFiles.forEach(f => {
+                const card = document.createElement("a");
+                card.className = "chat-attachment-item";
+                card.href = f.url || "#";
+                card.target = "_blank";
+                card.rel = "noopener noreferrer";
+                card.title = `${f.name || 'Datei'} herunterladen`;
+
+                const icon = document.createElement("i");
+                icon.className = `ph-bold ${getFileIconClass(f.name || "")} chat-attachment-icon`;
+
+                const info = document.createElement("div");
+                info.className = "chat-attachment-info";
+
+                const title = document.createElement("span");
+                title.className = "chat-attachment-name";
+                title.textContent = f.name || "Datei";
+
+                const size = document.createElement("span");
+                size.className = "chat-attachment-size";
+                size.textContent = formatFileSize(f.size);
+
+                info.appendChild(title);
+                info.appendChild(size);
+
+                const dlIcon = document.createElement("i");
+                dlIcon.className = "ph-bold ph-download-simple chat-attachment-download";
+
+                card.appendChild(icon);
+                card.appendChild(info);
+                card.appendChild(dlIcon);
+                attList.appendChild(card);
+            });
+            bubble.appendChild(attList);
+        }
+
         if (!isUser && text) {
             attachDownloadButtons(bubble, text);
         }
@@ -285,8 +364,8 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     // Append a message to the chat
-    const appendMessage = (text, isUser, imagesData = [], timestampStr = null, skipScroll = false, smoothScroll = false, isHistory = false) => {
-        const msgDiv = createMessageElement(text, isUser, imagesData, timestampStr, isHistory, skipScroll, smoothScroll);
+    const appendMessage = (text, isUser, imagesData = [], timestampStr = null, skipScroll = false, smoothScroll = false, isHistory = false, filesData = []) => {
+        const msgDiv = createMessageElement(text, isUser, imagesData, timestampStr, isHistory, skipScroll, smoothScroll, filesData);
         chatContainer.appendChild(msgDiv);
         
         if (!skipScroll) {
@@ -430,74 +509,147 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     };
 
-    // Update preview UI using memory-efficient Object URLs
+    // Update preview UI using memory-efficient Object URLs and file cards
     const updatePreviewUI = () => {
         imagePreviewContainer.innerHTML = '';
-        if (selectedImageFiles.length > 0) {
+        if (selectedFiles.length > 0) {
             imagePreviewContainer.style.display = "flex";
-            selectedImageFiles.forEach((file, index) => {
-                const itemDiv = document.createElement("div");
-                itemDiv.className = "preview-item";
+            selectedFiles.forEach((file, index) => {
+                const isImg = isImageFile(file);
+                if (isImg) {
+                    const itemDiv = document.createElement("div");
+                    itemDiv.className = "preview-item";
 
-                const img = document.createElement("img");
-                const blobUrl = URL.createObjectURL(file);
-                img.src = blobUrl;
-                img.alt = "Vorschau";
+                    const img = document.createElement("img");
+                    const blobUrl = URL.createObjectURL(file);
+                    img.src = blobUrl;
+                    img.alt = "Vorschau";
 
-                const btn = document.createElement("button");
-                btn.type = "button";
-                btn.className = "remove-image-btn";
-                btn.innerHTML = '<i class="ph-bold ph-x"></i>';
-                btn.title = "Bild entfernen";
-                btn.onclick = () => {
-                    URL.revokeObjectURL(blobUrl);
-                    selectedImageFiles.splice(index, 1);
-                    updatePreviewUI();
-                };
+                    const btn = document.createElement("button");
+                    btn.type = "button";
+                    btn.className = "remove-image-btn";
+                    btn.innerHTML = '<i class="ph-bold ph-x"></i>';
+                    btn.title = "Entfernen";
+                    btn.onclick = () => {
+                        URL.revokeObjectURL(blobUrl);
+                        selectedFiles.splice(index, 1);
+                        updatePreviewUI();
+                    };
 
-                itemDiv.appendChild(img);
-                itemDiv.appendChild(btn);
-                imagePreviewContainer.appendChild(itemDiv);
+                    itemDiv.appendChild(img);
+                    itemDiv.appendChild(btn);
+                    imagePreviewContainer.appendChild(itemDiv);
+                } else {
+                    const cardDiv = document.createElement("div");
+                    cardDiv.className = "preview-file-card";
+
+                    const icon = document.createElement("i");
+                    icon.className = `ph-bold ${getFileIconClass(file.name)} preview-file-icon`;
+
+                    const details = document.createElement("div");
+                    details.className = "preview-file-details";
+
+                    const nameSpan = document.createElement("span");
+                    nameSpan.className = "preview-file-name";
+                    nameSpan.textContent = file.name || "Datei";
+                    nameSpan.title = file.name || "Datei";
+
+                    const sizeSpan = document.createElement("span");
+                    sizeSpan.className = "preview-file-size";
+                    sizeSpan.textContent = formatFileSize(file.size);
+
+                    details.appendChild(nameSpan);
+                    details.appendChild(sizeSpan);
+
+                    const btn = document.createElement("button");
+                    btn.type = "button";
+                    btn.className = "remove-image-btn";
+                    btn.innerHTML = '<i class="ph-bold ph-x"></i>';
+                    btn.title = "Entfernen";
+                    btn.onclick = () => {
+                        selectedFiles.splice(index, 1);
+                        updatePreviewUI();
+                    };
+
+                    cardDiv.appendChild(icon);
+                    cardDiv.appendChild(details);
+                    cardDiv.appendChild(btn);
+                    imagePreviewContainer.appendChild(cardDiv);
+                }
             });
         } else {
             imagePreviewContainer.style.display = "none";
         }
     };
 
-    // Handle Image Selection with instant preview and async background compression
-    const handleImageSelection = async (e, otherInputToClear) => {
-        if (e.target.files && e.target.files.length > 0) {
-            const rawFiles = Array.from(e.target.files);
+    // Add files to list with limit check and background compression for images
+    const addFilesToList = async (rawFiles) => {
+        if (selectedFiles.length + rawFiles.length > 10) {
+            alert("Du kannst maximal 10 Dateien auf einmal senden.");
+            return;
+        }
 
-            if (selectedImageFiles.length + rawFiles.length > 5) {
-                alert("Du kannst maximal 5 Bilder auf einmal senden.");
-                otherInputToClear.value = "";
-                e.target.value = "";
-                return;
-            }
+        const startIndex = selectedFiles.length;
+        selectedFiles = [...selectedFiles, ...rawFiles];
+        updatePreviewUI();
+        messageInput.focus();
 
-            const startIndex = selectedImageFiles.length;
-            selectedImageFiles = [...selectedImageFiles, ...rawFiles];
-            otherInputToClear.value = "";
-            e.target.value = "";
-            updatePreviewUI();
-            messageInput.focus();
-
-            try {
-                const compressedFiles = await Promise.all(rawFiles.map(f => compressImage(f)));
-                for (let i = 0; i < compressedFiles.length; i++) {
-                    if (selectedImageFiles[startIndex + i] === rawFiles[i]) {
-                        selectedImageFiles[startIndex + i] = compressedFiles[i];
-                    }
+        try {
+            const processedFiles = await Promise.all(rawFiles.map(f => isImageFile(f) ? compressImage(f) : f));
+            for (let i = 0; i < processedFiles.length; i++) {
+                if (selectedFiles[startIndex + i] === rawFiles[i]) {
+                    selectedFiles[startIndex + i] = processedFiles[i];
                 }
-            } catch (err) {
-                console.warn("Async compression error, keeping raw files", err);
             }
+        } catch (err) {
+            console.warn("Async compression error, keeping raw files", err);
         }
     };
 
-    imageUpload.addEventListener("change", (e) => handleImageSelection(e, cameraUpload));
-    cameraUpload.addEventListener("change", (e) => handleImageSelection(e, imageUpload));
+    // Handle file selection from inputs
+    const handleFileSelection = async (e, ...inputsToClear) => {
+        if (e.target && e.target.files && e.target.files.length > 0) {
+            await addFilesToList(Array.from(e.target.files));
+            inputsToClear.forEach(input => { if (input) input.value = ""; });
+            if (e.target) e.target.value = "";
+        }
+    };
+
+    if (fileUpload) fileUpload.addEventListener("change", (e) => handleFileSelection(e, imageUpload, cameraUpload));
+    if (imageUpload) imageUpload.addEventListener("change", (e) => handleFileSelection(e, fileUpload, cameraUpload));
+    if (cameraUpload) cameraUpload.addEventListener("change", (e) => handleFileSelection(e, fileUpload, imageUpload));
+
+    // Drag & Drop support
+    const dropTargets = [chatContainer, chatForm];
+    dropTargets.forEach(target => {
+        if (!target) return;
+        ['dragenter', 'dragover'].forEach(eventName => {
+            target.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                target.classList.add('drag-over');
+            });
+        });
+        ['dragleave', 'drop'].forEach(eventName => {
+            target.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                target.classList.remove('drag-over');
+            });
+        });
+        target.addEventListener('drop', (e) => {
+            if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                addFilesToList(Array.from(e.dataTransfer.files));
+            }
+        });
+    });
+
+    // Paste support from clipboard
+    document.addEventListener('paste', (e) => {
+        if (e.clipboardData && e.clipboardData.files && e.clipboardData.files.length > 0) {
+            addFilesToList(Array.from(e.clipboardData.files));
+        }
+    });
 
     // --- Polling for Active Background Processing ---
     const activePollTimers = new Map();
@@ -616,7 +768,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 currentRenderStartIndex = Math.max(0, currentSessionHistory.length - MESSAGE_BATCH_SIZE);
                 const initialBatch = currentSessionHistory.slice(currentRenderStartIndex);
                 initialBatch.forEach(msg => {
-                    appendMessage(msg.text, msg.is_user, msg.images || msg.image_urls || [], msg.timestamp, true, false, true);
+                    const msgFiles = msg.files || [];
+                    const msgImages = (msg.images || msg.image_urls || []).length > 0 
+                        ? (msg.images || msg.image_urls) 
+                        : msgFiles.filter(f => f.is_image);
+                    appendMessage(msg.text, msg.is_user, msgImages, msg.timestamp, true, false, true, msgFiles);
                 });
                 scrollToBottom(false);
             } else if (!isProcessing && activeSubmittingSessionId !== sessionId) {
@@ -769,7 +925,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         const text = messageInput.value.trim();
-        if (!text && selectedImageFiles.length === 0) return;
+        if (!text && selectedFiles.length === 0) return;
 
         const submittedSessionId = currentSessionId;
         activeSubmittingSessionId = submittedSessionId; // Lock immediately to protect DOM
@@ -778,19 +934,28 @@ document.addEventListener("DOMContentLoaded", () => {
         // Hide warning and show UI feedback immediately
         contextWarning.style.display = "none";
         
-        // Grab local urls before we clear selectedImageFiles
-        let localImageUrls = [];
-        if (selectedImageFiles.length > 0) {
-            localImageUrls = selectedImageFiles.map(f => URL.createObjectURL(f));
-        }
+        const filesToUpload = [...selectedFiles];
+        const localImages = [];
+        const localNonImages = [];
 
-        const filesToUpload = [...selectedImageFiles];
+        filesToUpload.forEach(f => {
+            if (isImageFile(f)) {
+                localImages.push(URL.createObjectURL(f));
+            } else {
+                localNonImages.push({
+                    name: f.name,
+                    size: f.size,
+                    is_image: false,
+                    url: '#'
+                });
+            }
+        });
 
         // Reset input immediately for responsiveness
         messageInput.value = "";
         messageInput.style.height = "auto";
         messageInput.style.overflowY = "hidden";
-        selectedImageFiles = [];
+        selectedFiles = [];
         updatePreviewUI();
 
         // Show typing indicator while we possibly fetch GPS
@@ -815,8 +980,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Build display message
         let displayMsg = text;
-        if (filesToUpload.length > 0) {
-            displayMsg += displayMsg ? ` [${filesToUpload.length} Bild(er) angehängt]` : `[${filesToUpload.length} Bild(er) gesendet]`;
+        const numImg = filesToUpload.filter(isImageFile).length;
+        const numDoc = filesToUpload.length - numImg;
+        if (numImg > 0 && numDoc > 0) {
+            displayMsg += displayMsg ? ` [${numImg} Bild(er), ${numDoc} Datei(en) angehängt]` : `[${numImg} Bild(er), ${numDoc} Datei(en) gesendet]`;
+        } else if (numImg > 0) {
+            displayMsg += displayMsg ? ` [${numImg} Bild(er) angehängt]` : `[${numImg} Bild(er) gesendet]`;
+        } else if (numDoc > 0) {
+            displayMsg += displayMsg ? ` [${numDoc} Datei(en) angehängt]` : `[${numDoc} Datei(en) gesendet]`;
         }
 
         // Remove the early typing indicator so we can append the user message
@@ -829,11 +1000,12 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         const now = new Date().toISOString();
-        appendMessage(displayMsg, true, localImageUrls, now, false, true, false);
+        appendMessage(displayMsg, true, localImages, now, false, true, false, localNonImages);
         currentSessionHistory.push({
             text: displayMsg,
             is_user: true,
-            images: localImageUrls,
+            images: localImages,
+            files: localNonImages,
             timestamp: now
         });
 
@@ -842,7 +1014,10 @@ document.addEventListener("DOMContentLoaded", () => {
         formData.append("message", text);
         formData.append("stream", "true");
         filesToUpload.forEach(file => {
-            formData.append("images", file);
+            formData.append("files", file);
+            if (isImageFile(file)) {
+                formData.append("images", file);
+            }
         });
         if (locationStr) {
             formData.append("location", locationStr);

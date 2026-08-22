@@ -364,6 +364,47 @@ body {
     display: block;
 }
 
+.preview-file-card {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    padding: 0.4rem 0.6rem;
+    padding-right: 1.8rem;
+    max-width: 180px;
+    min-height: 50px;
+}
+
+.preview-file-icon {
+    font-size: 1.5rem;
+    color: var(--primary-color);
+    flex-shrink: 0;
+}
+
+.preview-file-details {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+}
+
+.preview-file-name {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-main);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.preview-file-size {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+}
+
 .remove-image-btn {
     position: absolute;
     top: 0;
@@ -680,6 +721,77 @@ body {
     max-width: 200px;
     min-height: 120px;
     object-fit: cover;
+}
+
+/* Chat Attachments */
+.chat-attachments-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+}
+
+.chat-attachment-item {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    background-color: rgba(15, 23, 42, 0.4);
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    text-decoration: none;
+    color: var(--text-main);
+    transition: all 0.2s ease;
+    max-width: 320px;
+}
+
+.chat-attachment-item:hover {
+    background-color: rgba(15, 23, 42, 0.7);
+    border-color: var(--primary-color);
+    transform: translateY(-1px);
+}
+
+.chat-attachment-icon {
+    font-size: 1.4rem;
+    color: var(--primary-color);
+    flex-shrink: 0;
+}
+
+.chat-attachment-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-attachment-name {
+    font-size: 0.85rem;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.chat-attachment-size {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+}
+
+.chat-attachment-download {
+    font-size: 1.1rem;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    transition: color 0.2s;
+}
+
+.chat-attachment-item:hover .chat-attachment-download {
+    color: var(--primary-color);
+}
+
+/* Drag-and-drop state */
+.chat-container.drag-over, .input-form.drag-over {
+    border-color: var(--primary-color) !important;
+    background-color: rgba(16, 185, 129, 0.08) !important;
 }
 
 /* Sidebar Styles */

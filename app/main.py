@@ -142,6 +142,7 @@ class ChatMessage(BaseModel):
     is_user: bool
     image_urls: List[str] = []
     images: Optional[List[dict]] = None
+    files: Optional[List[dict]] = None
     timestamp: Optional[str] = None
 
 @app.get("/", response_class=HTMLResponse)
@@ -329,6 +330,7 @@ async def chat_endpoint(
     message: str = Form(""),
     location: str = Form(""),
     stream: str = Form("false"),
+    files: List[UploadFile] = File([]),
     images: List[UploadFile] = File([]),
     username: str = Depends(get_current_user)
 ):
@@ -340,55 +342,106 @@ async def chat_endpoint(
     session_key = (username, session_id)
     _active_chat_sessions.add(session_key)
 
-    valid_images = [img for img in images if img.filename]
-    if len(valid_images) > 5:
+    valid_uploads = [f for f in (files + images) if f.filename]
+    if len(valid_uploads) > 10:
         _active_chat_sessions.discard(session_key)
-        logger.warning(f"Rejected chat request: {len(valid_images)} images uploaded (max 5) for session {session_id} by '{username}'")
-        return JSONResponse(status_code=400, content={"error": "Maximal 5 Bilder erlaubt"})
+        logger.warning(f"Rejected chat request: {len(valid_uploads)} files uploaded (max 10) for session {session_id} by '{username}'")
+        return JSONResponse(status_code=400, content={"error": "Maximal 10 Dateien erlaubt"})
         
     display_msg = message
     image_paths = []
     image_urls = []
     images_data = []
+    files_data = []
+    attachments = []
     
     try:
-        if valid_images:
+        if valid_uploads:
             # Ensure uploads dir exists for user
             user_uploads_dir = os.path.join(DATA_DIR, username, "sessions", session_id, "uploads")
             os.makedirs(user_uploads_dir, exist_ok=True)
             
-            for img in valid_images:
-                # Save uploaded image permanently
-                ext = os.path.splitext(img.filename)[1].lower() if img.filename else ""
-                if not ext or ext not in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"]:
-                    ext = ".jpg"
-                filename = f"{uuid.uuid4().hex}{ext}"
-                img_path = os.path.join(user_uploads_dir, filename)
+            for upload_file in valid_uploads:
+                orig_filename = os.path.basename(upload_file.filename) if upload_file.filename else "file"
+                safe_filename = re.sub(r'[^a-zA-Z0-9._-]', '_', orig_filename)
                 
-                contents = await img.read()
+                contents = await upload_file.read()
+                file_size = len(contents)
                 
+                ext = os.path.splitext(orig_filename)[1].lower()
+                is_image = False
                 width, height = 0, 0
-                try:
-                    with Image.open(io.BytesIO(contents)) as pil_img:
-                        width, height = pil_img.size
-                except Exception as e:
-                    logger.warning(f"Could not read image dimensions for uploaded image in session {session_id}: {e}")
+                
+                if ext in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp"] or not ext or orig_filename == "blob":
+                    try:
+                        with Image.open(io.BytesIO(contents)) as pil_img:
+                            width, height = pil_img.size
+                            is_image = True
+                            if not ext and pil_img.format:
+                                fmt_ext = f".{pil_img.format.lower()}"
+                                if fmt_ext == ".jpeg":
+                                    fmt_ext = ".jpg"
+                                ext = fmt_ext
+                                safe_filename += ext
+                    except Exception as e:
+                        if ext == ".svg":
+                            is_image = True
+                        elif ext:
+                            logger.warning(f"Could not parse image dimensions for {orig_filename} in session {session_id}: {e}")
 
-                with open(img_path, "wb") as f:
+                if not ext and is_image:
+                    ext = ".jpg"
+                    safe_filename += ext
+
+                unique_filename = f"{uuid.uuid4().hex[:8]}_{safe_filename}"
+                saved_path = os.path.join(user_uploads_dir, unique_filename)
+                
+                with open(saved_path, "wb") as f:
                     f.write(contents)
                     
-                image_paths.append(img_path)
-                url = f"/uploads/{session_id}/{filename}"
-                image_urls.append(url)
-                images_data.append({"url": url, "width": width, "height": height})
+                file_url = f"/uploads/{session_id}/{unique_filename}"
                 
-            if not display_msg:
-                display_msg = f"[{len(valid_images)} Bild(er) gesendet]"
-            else:
-                display_msg += f" [{len(valid_images)} Bild(er) angehängt]"
+                if is_image:
+                    image_paths.append(saved_path)
+                    image_urls.append(file_url)
+                    images_data.append({"url": file_url, "width": width, "height": height})
+                    
+                file_meta = {
+                    "url": file_url,
+                    "name": orig_filename,
+                    "size": file_size,
+                    "is_image": is_image,
+                    "path": saved_path
+                }
+                if is_image and width > 0:
+                    file_meta["width"] = width
+                    file_meta["height"] = height
+                files_data.append(file_meta)
+                
+                attachments.append({
+                    "path": saved_path,
+                    "name": orig_filename,
+                    "size": file_size,
+                    "is_image": is_image
+                })
+                
+            num_images = sum(1 for f in files_data if f["is_image"])
+            num_docs = sum(1 for f in files_data if not f["is_image"])
+            
+            if num_images > 0 and num_docs > 0:
+                tag = f"[{num_images} Bild(er), {num_docs} Datei(en) angehängt]"
+                display_msg = f"{message} {tag}".strip() if message else f"[{num_images} Bild(er), {num_docs} Datei(en) gesendet]"
+            elif num_images > 0:
+                tag = f"[{num_images} Bild(er) angehängt]"
+                display_msg = f"{message} {tag}".strip() if message else f"[{num_images} Bild(er) gesendet]"
+            elif num_docs > 0:
+                tag = f"[{num_docs} Datei(en) angehängt]"
+                display_msg = f"{message} {tag}".strip() if message else f"[{num_docs} Datei(en) gesendet]"
+                
+            logger.info(f"User '{username}' uploaded {len(valid_uploads)} file(s) for session {session_id}")
     except Exception as e:
         _active_chat_sessions.discard(session_key)
-        logger.error(f"Failed to process/save image upload for session {session_id} (user '{username}'): {e}", exc_info=True)
+        logger.error(f"Failed to process/save file upload for session {session_id} (user '{username}'): {e}", exc_info=True)
         raise
 
     # Fetch history to check if this is the first message and to provide context to AI
@@ -401,6 +454,7 @@ async def chat_endpoint(
         "is_user": True,
         "image_urls": image_urls,
         "images": images_data if images_data else None,
+        "files": files_data if files_data else None,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
     await save_session_message(username, session_id, user_msg_data)
@@ -409,7 +463,7 @@ async def chat_endpoint(
     if is_first_message:
         current_title = await get_session_title(username, session_id)
         if current_title == "Neuer Chat":
-            title_source = message if message else "Foto-Notiz"
+            title_source = message if message else ("Dateianhang" if (files_data and not any(f['is_image'] for f in files_data)) else "Foto-Notiz")
             new_title = (title_source[:27] + "...") if len(title_source) > 30 else title_source
             await update_session_title(username, session_id, new_title)
             target_path = get_session_icon_target_path(username, session_id)
@@ -447,6 +501,7 @@ async def chat_endpoint(
                     context_messages=history, 
                     new_message=message, 
                     image_paths=image_paths, 
+                    attachments=attachments,
                     system_prompt=combined_prompt,
                     cwd=user_data_dir
                 ):
@@ -525,6 +580,7 @@ async def chat_endpoint(
                 context_messages=history, 
                 new_message=message, 
                 image_paths=image_paths, 
+                attachments=attachments,
                 system_prompt=combined_prompt,
                 cwd=user_data_dir
             )
@@ -600,8 +656,13 @@ async def get_upload(session_id: str, filename: str, username: str = Depends(get
     safe_session_id = os.path.basename(session_id)
     file_path = os.path.join(DATA_DIR, username, "sessions", safe_session_id, "uploads", safe_filename)
     if os.path.exists(file_path):
+        download_name = safe_filename
+        match = re.match(r'^[0-9a-fA-F]{8}_(.+)$', safe_filename)
+        if match:
+            download_name = match.group(1)
         return FileResponse(
             file_path,
+            filename=download_name,
             headers={"Cache-Control": "public, max-age=31536000, immutable"}
         )
     logger.warning(f"Upload file not found: '{filename}' for session {session_id} (user '{username}')")
