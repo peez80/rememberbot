@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import FastAPI, UploadFile, File, Form, Request, Response, HTTPException, Depends
+from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,6 +44,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Global Exception Handlers for complete error observability
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.warning(f"Validation error on {request.method} {request.url.path}: {exc.errors()}")
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    log_fn = logger.error if exc.status_code >= 500 else logger.warning
+    log_fn(f"HTTP {exc.status_code} on {request.method} {request.url.path}: {exc.detail}")
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception on {request.method} {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(status_code=500, content={"error": "Interner Serverfehler"})
+
 # Initialize storage on startup
 init_storage()
 
@@ -53,7 +71,11 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
-    return FileResponse(os.path.join(static_dir, "favicon.png"))
+    favicon_path = os.path.join(static_dir, "favicon.png")
+    if not os.path.exists(favicon_path):
+        logger.warning(f"Favicon not found at {favicon_path}")
+        raise HTTPException(status_code=404, detail="Favicon not found")
+    return FileResponse(favicon_path)
 
 # --- Authentication & Sessions ---
 
@@ -63,7 +85,8 @@ def get_valid_users():
         try:
             with open(users_file, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to read users config from {users_file}: {e}", exc_info=True)
             return {}
     return {}
 
@@ -76,15 +99,16 @@ def load_auth_sessions():
         try:
             with open(AUTH_SESSIONS_FILE, "r", encoding="utf-8") as f:
                 ACTIVE_SESSIONS = json.load(f)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to load auth sessions from {AUTH_SESSIONS_FILE}: {e}")
             ACTIVE_SESSIONS = {}
 
 def save_auth_sessions():
     try:
         with open(AUTH_SESSIONS_FILE, "w", encoding="utf-8") as f:
             json.dump(ACTIVE_SESSIONS, f)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"Failed to save auth sessions to {AUTH_SESSIONS_FILE}: {e}", exc_info=True)
 
 # Load sessions on startup
 load_auth_sessions()
@@ -99,10 +123,17 @@ def get_current_user(request: Request) -> str:
 _active_tasks = set()
 _active_chat_sessions = set()
 
+def _handle_bg_task_done(task: asyncio.Task):
+    _active_tasks.discard(task)
+    if not task.cancelled():
+        exc = task.exception()
+        if exc:
+            logger.error(f"Unhandled exception in background task: {exc}", exc_info=exc)
+
 def fire_and_forget(coro):
     task = asyncio.create_task(coro)
     _active_tasks.add(task)
-    task.add_done_callback(_active_tasks.discard)
+    task.add_done_callback(_handle_bg_task_done)
 
 # --- Endpoints ---
 
@@ -115,12 +146,18 @@ class ChatMessage(BaseModel):
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_index():
-    with open(os.path.join(static_dir, "index.html"), "r", encoding="utf-8") as f:
-        return f.read()
+    index_file = os.path.join(static_dir, "index.html")
+    try:
+        with open(index_file, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        logger.error(f"Failed to load index.html from {index_file}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Could not load index.html")
 
 # Auth Endpoints
 @app.post("/api/auth/login")
-async def login(response: Response, username: str = Form(...), password: str = Form(...)):
+async def login(request: Request, response: Response, username: str = Form(...), password: str = Form(...)):
+    client_ip = request.client.host if request.client else "unknown"
     users = get_valid_users()
     if username in users and users[username] == password:
         session_token = uuid.uuid4().hex
@@ -136,15 +173,19 @@ async def login(response: Response, username: str = Form(...), password: str = F
         )
         # Ensure user directories exist
         init_user_storage(username)
+        logger.info(f"User '{username}' logged in successfully from {client_ip}")
         return {"success": True}
+    logger.warning(f"Failed login attempt for user '{username}' from {client_ip}")
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 @app.post("/api/auth/logout")
 async def logout(request: Request, response: Response):
     session_token = request.cookies.get("session_token")
+    username = ACTIVE_SESSIONS.get(session_token, "unknown")
     if session_token in ACTIVE_SESSIONS:
         del ACTIVE_SESSIONS[session_token]
         save_auth_sessions()
+        logger.info(f"User '{username}' logged out")
     response.delete_cookie("session_token")
     return {"success": True}
 
@@ -159,6 +200,7 @@ async def auth_status(request: Request):
 @app.post("/api/sessions")
 async def create_session_endpoint(username: str = Depends(get_current_user)):
     session_id = await create_session(username, "Neuer Chat")
+    logger.info(f"User '{username}' created new session {session_id}")
     return {"id": session_id, "title": "Neuer Chat"}
 
 @app.get("/api/sessions")
@@ -169,6 +211,7 @@ async def get_sessions_endpoint(username: str = Depends(get_current_user)):
 @app.get("/api/sessions/{session_id}/status")
 async def get_session_status_endpoint(session_id: str, username: str = Depends(get_current_user)):
     if not await check_session_exists(username, session_id):
+        logger.warning(f"Status check for non-existent session {session_id} by user '{username}'")
         raise HTTPException(status_code=404, detail="Session not found")
         
     is_processing = (username, session_id) in _active_chat_sessions
@@ -177,6 +220,7 @@ async def get_session_status_endpoint(session_id: str, username: str = Depends(g
 @app.get("/api/sessions/{session_id}/history", response_model=List[ChatMessage])
 async def get_history_endpoint(session_id: str, response: Response, username: str = Depends(get_current_user)):
     if not await check_session_exists(username, session_id):
+        logger.warning(f"History requested for non-existent session {session_id} by user '{username}'")
         raise HTTPException(status_code=404, detail="Session not found")
         
     history = await get_session_history(username, session_id)
@@ -195,14 +239,17 @@ async def get_session_icon(session_id: str, username: str = Depends(get_current_
     icon_path = get_session_icon_path(username, session_id)
     if icon_path and os.path.exists(icon_path):
         return FileResponse(icon_path, media_type="image/svg+xml")
+    logger.warning(f"Icon not found for session {session_id} (user '{username}')")
     raise HTTPException(status_code=404, detail="Icon not found")
 
 @app.delete("/api/sessions/{session_id}")
 async def delete_session_endpoint(session_id: str, username: str = Depends(get_current_user)):
     if not await check_session_exists(username, session_id):
+        logger.warning(f"Delete requested for non-existent session {session_id} by user '{username}'")
         raise HTTPException(status_code=404, detail="Session not found")
         
     await delete_session(username, session_id)
+    logger.info(f"User '{username}' deleted session {session_id}")
     return {"success": True}
 
 class SessionSettingsRequest(BaseModel):
@@ -212,6 +259,7 @@ class SessionSettingsRequest(BaseModel):
 @app.get("/api/sessions/{session_id}/settings")
 async def get_settings_endpoint(session_id: str, username: str = Depends(get_current_user)):
     if not await check_session_exists(username, session_id):
+        logger.warning(f"Settings requested for non-existent session {session_id} by user '{username}'")
         raise HTTPException(status_code=404, detail="Session not found")
         
     settings = await get_session_settings(username, session_id)
@@ -220,9 +268,11 @@ async def get_settings_endpoint(session_id: str, username: str = Depends(get_cur
 @app.put("/api/sessions/{session_id}/settings")
 async def update_settings_endpoint(session_id: str, req: SessionSettingsRequest, username: str = Depends(get_current_user)):
     if not await check_session_exists(username, session_id):
+        logger.warning(f"Settings update requested for non-existent session {session_id} by user '{username}'")
         raise HTTPException(status_code=404, detail="Session not found")
         
     await update_session_settings(username, session_id, req.prompt, req.include_gps)
+    logger.info(f"User '{username}' updated settings for session {session_id}")
     return {"success": True}
 
 class SessionTitleRequest(BaseModel):
@@ -231,9 +281,11 @@ class SessionTitleRequest(BaseModel):
 @app.put("/api/sessions/{session_id}/title")
 async def update_title_endpoint(session_id: str, req: SessionTitleRequest, username: str = Depends(get_current_user)):
     if not await check_session_exists(username, session_id):
+        logger.warning(f"Title update requested for non-existent session {session_id} by user '{username}'")
         raise HTTPException(status_code=404, detail="Session not found")
         
     await update_session_title(username, session_id, req.title)
+    logger.info(f"User '{username}' updated title for session {session_id} to '{req.title}'")
     target_path = get_session_icon_target_path(username, session_id)
     fire_and_forget(agy_client.generate_chat_icon(req.title, target_path))
     return {"success": True}
@@ -250,6 +302,7 @@ async def chat_endpoint(
 ):
     # Verify session exists
     if not await check_session_exists(username, session_id):
+        logger.warning(f"Chat request sent to non-existent session {session_id} by user '{username}'")
         raise HTTPException(status_code=404, detail="Session not found")
 
     session_key = (username, session_id)
@@ -258,6 +311,7 @@ async def chat_endpoint(
     valid_images = [img for img in images if img.filename]
     if len(valid_images) > 5:
         _active_chat_sessions.discard(session_key)
+        logger.warning(f"Rejected chat request: {len(valid_images)} images uploaded (max 5) for session {session_id} by '{username}'")
         return JSONResponse(status_code=400, content={"error": "Maximal 5 Bilder erlaubt"})
         
     display_msg = message
@@ -286,7 +340,7 @@ async def chat_endpoint(
                     with Image.open(io.BytesIO(contents)) as pil_img:
                         width, height = pil_img.size
                 except Exception as e:
-                    logger.warning(f"Could not read image dimensions: {e}")
+                    logger.warning(f"Could not read image dimensions for uploaded image in session {session_id}: {e}")
 
                 with open(img_path, "wb") as f:
                     f.write(contents)
@@ -300,8 +354,9 @@ async def chat_endpoint(
                 display_msg = f"[{len(valid_images)} Bild(er) gesendet]"
             else:
                 display_msg += f" [{len(valid_images)} Bild(er) angehängt]"
-    except Exception:
+    except Exception as e:
         _active_chat_sessions.discard(session_key)
+        logger.error(f"Failed to process/save image upload for session {session_id} (user '{username}'): {e}", exc_info=True)
         raise
 
     # Fetch history to check if this is the first message and to provide context to AI
@@ -409,8 +464,11 @@ async def chat_endpoint(
                 await asyncio.shield(save_session_message(username, session_id, ai_msg_data))
 
                 yield f"data: {json.dumps({'type': 'done', 'reply': saved_reply, 'context_truncated': context_truncated, 'timestamp': ai_msg_data['timestamp']})}\n\n"
+            except asyncio.CancelledError:
+                logger.info(f"SSE client disconnected for session {session_id} (user '{username}')")
+                raise
             except Exception as e:
-                logger.error(f"Error in SSE stream: {e}", exc_info=True)
+                logger.error(f"Error in SSE stream for session {session_id} (user '{username}'): {e}", exc_info=True)
                 yield f"data: {json.dumps({'type': 'error', 'error': 'Fehler bei der Antwortgenerierung'})}\n\n"
             finally:
                 _active_chat_sessions.discard(session_key)
@@ -495,6 +553,9 @@ async def chat_endpoint(
                 "context_truncated": context_truncated,
                 "timestamp": ai_msg_data["timestamp"]
             }
+        except Exception as e:
+            logger.error(f"Error in non-streaming chat process for session {session_id} (user '{username}'): {e}", exc_info=True)
+            raise
         finally:
             _active_chat_sessions.discard(session_key)
 
@@ -504,15 +565,14 @@ async def chat_endpoint(
         result = await asyncio.shield(task)
         return JSONResponse(content=result)
     except asyncio.CancelledError:
-        # If the client disconnected, FastAPI cancels this endpoint request.
-        # But `asyncio.shield` ensures `task` continues running in the background.
-        # We raise the exception to let FastAPI cleanup properly.
+        logger.info(f"Client disconnected during chat request for session {session_id} (user '{username}'). Task continues in background.")
         raise
 
 # Secure Downloads Endpoint for AI Generated files
 @app.get("/app/data/{username}/{session_id}/data/{file_path:path}")
 async def download_file(username: str, session_id: str, file_path: str, current_user: str = Depends(get_current_user)):
     if username != current_user:
+        logger.warning(f"Forbidden data download attempt: user '{current_user}' attempted to access files of user '{username}', file: '{file_path}'")
         raise HTTPException(status_code=403, detail="Forbidden")
     # --- Fallback for old history with scratch paths ---
     if file_path.startswith("file:///root/.gemini/antigravity-cli/"):
@@ -529,10 +589,12 @@ async def download_file(username: str, session_id: str, file_path: str, current_
     full_path = os.path.abspath(os.path.join(base_dir, file_path))
     
     if not full_path.startswith(base_dir):
+        logger.warning(f"Potential path traversal attempt detected in data download: '{file_path}' for session {session_id} by user '{username}'")
         raise HTTPException(status_code=400, detail="Invalid path")
         
     if os.path.isfile(full_path):
         return FileResponse(full_path, filename=os.path.basename(full_path))
+    logger.warning(f"Data file not found: '{file_path}' in session {session_id} for user '{username}'")
     raise HTTPException(status_code=404, detail="File not found")
 
 # Secure Uploads Endpoint
@@ -546,6 +608,7 @@ async def get_upload(session_id: str, filename: str, username: str = Depends(get
             file_path,
             headers={"Cache-Control": "public, max-age=31536000, immutable"}
         )
+    logger.warning(f"Upload file not found: '{filename}' for session {session_id} (user '{username}')")
     raise HTTPException(status_code=404, detail="File not found")
 
 # Secure Thumbnails Endpoint
@@ -564,6 +627,7 @@ async def get_thumbnail(session_id: str, filename: str, username: str = Depends(
         
     orig_path = os.path.join(DATA_DIR, username, "sessions", safe_session_id, "uploads", safe_filename)
     if not os.path.exists(orig_path):
+        logger.warning(f"Thumbnail source image not found: '{filename}' for session {session_id} (user '{username}')")
         raise HTTPException(status_code=404, detail="Image not found")
         
     success = await asyncio.to_thread(generate_thumbnail, orig_path, thumb_path)
@@ -573,7 +637,9 @@ async def get_thumbnail(session_id: str, filename: str, username: str = Depends(
             headers={"Cache-Control": "public, max-age=31536000, immutable"}
         )
     # Fallback to original if thumbnail generation failed (e.g. non-image or SVG)
+    logger.warning(f"Thumbnail generation failed for '{filename}', falling back to original image.")
     return FileResponse(
         orig_path,
         headers={"Cache-Control": "public, max-age=31536000, immutable"}
     )
+

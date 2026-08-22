@@ -20,22 +20,34 @@ DATA_DIR = os.getenv("DATA_DIR", os.path.join(os.path.dirname(os.path.dirname(__
 
 def init_storage():
     """Ensure the base data directory exists."""
-    os.makedirs(DATA_DIR, exist_ok=True)
-    os.makedirs(os.path.join(DATA_DIR, "config"), exist_ok=True)
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        os.makedirs(os.path.join(DATA_DIR, "config"), exist_ok=True)
+    except OSError as e:
+        logger.error(f"Failed to initialize base storage at {DATA_DIR}: {e}", exc_info=True)
+        raise
 
 def init_user_storage(username: str):
     """Ensure the subdirectories for a specific user exist."""
-    user_dir = os.path.join(DATA_DIR, username)
-    os.makedirs(user_dir, exist_ok=True)
-    os.makedirs(os.path.join(user_dir, "sessions"), exist_ok=True)
+    try:
+        user_dir = os.path.join(DATA_DIR, username)
+        os.makedirs(user_dir, exist_ok=True)
+        os.makedirs(os.path.join(user_dir, "sessions"), exist_ok=True)
+    except OSError as e:
+        logger.error(f"Failed to initialize user storage for '{username}': {e}", exc_info=True)
+        raise
 
 def init_session_storage(username: str, session_id: str):
     """Ensure the subdirectories for a specific session exist."""
-    session_dir = os.path.join(DATA_DIR, username, "sessions", session_id)
-    os.makedirs(session_dir, exist_ok=True)
-    os.makedirs(os.path.join(session_dir, "uploads"), exist_ok=True)
-    os.makedirs(os.path.join(session_dir, "thumbnails"), exist_ok=True)
-    os.makedirs(os.path.join(session_dir, "data"), exist_ok=True)
+    try:
+        session_dir = os.path.join(DATA_DIR, username, "sessions", session_id)
+        os.makedirs(session_dir, exist_ok=True)
+        os.makedirs(os.path.join(session_dir, "uploads"), exist_ok=True)
+        os.makedirs(os.path.join(session_dir, "thumbnails"), exist_ok=True)
+        os.makedirs(os.path.join(session_dir, "data"), exist_ok=True)
+    except OSError as e:
+        logger.error(f"Failed to initialize session storage for '{username}/{session_id}': {e}", exc_info=True)
+        raise
 
 
 # --- Session Management ---
@@ -71,7 +83,7 @@ def generate_thumbnail(source_path: str, target_path: str, max_dimension: int = 
             img.save(target_path, "JPEG", quality=80, optimize=True)
             return True
     except Exception as e:
-        logger.warning(f"Failed to generate thumbnail for {source_path}: {e}")
+        logger.warning(f"Failed to generate thumbnail for {source_path}: {e}", exc_info=True)
         return False
 
 def get_session_filepath(username: str, session_id: str) -> str:
@@ -104,8 +116,12 @@ def _sync_create_session(username: str, title: str) -> str:
         "include_gps": False
     }
     
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(session_data, f, indent=2, ensure_ascii=False)
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(session_data, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Failed to create session file {filepath} for user '{username}': {e}", exc_info=True)
+        raise
         
     return session_id
 
@@ -136,7 +152,8 @@ def _sync_get_sessions(username: str) -> list:
                             "created_at": data.get("created_at", ""),
                             "has_icon": has_icon
                         })
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"Failed to read session file {filepath} for user '{username}': {e}", exc_info=True)
                     continue
                     
     # Sort newest first
@@ -155,7 +172,8 @@ def _sync_get_session_history(username: str, session_id: str) -> list:
         with open(filepath, "r", encoding="utf-8") as f:
             data = json.load(f)
             return data.get("history", [])
-    except Exception:
+    except Exception as e:
+        logger.error(f"Failed to read session history from {filepath} for user '{username}': {e}", exc_info=True)
         return []
 
 async def get_session_history(username: str, session_id: str) -> list:
@@ -165,6 +183,7 @@ async def get_session_history(username: str, session_id: str) -> list:
 def _sync_save_session_message(username: str, session_id: str, message: dict):
     filepath = get_session_filepath(username, session_id)
     if not os.path.exists(filepath):
+        logger.warning(f"Cannot save message: session file {filepath} does not exist for user '{username}'")
         return
         
     try:
@@ -175,8 +194,8 @@ def _sync_save_session_message(username: str, session_id: str, message: dict):
         
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"Failed to save message to session {session_id} for user '{username}': {e}", exc_info=True)
 
 async def save_session_message(username: str, session_id: str, message: dict):
     async with session_locks[session_id]:
@@ -185,6 +204,7 @@ async def save_session_message(username: str, session_id: str, message: dict):
 def _sync_update_session_title(username: str, session_id: str, new_title: str):
     filepath = get_session_filepath(username, session_id)
     if not os.path.exists(filepath):
+        logger.warning(f"Cannot update title: session file {filepath} does not exist for user '{username}'")
         return
         
     try:
@@ -195,8 +215,8 @@ def _sync_update_session_title(username: str, session_id: str, new_title: str):
         
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"Failed to update title for session {session_id} (user '{username}'): {e}", exc_info=True)
 
 async def update_session_title(username: str, session_id: str, new_title: str):
     async with session_locks[session_id]:
@@ -210,7 +230,8 @@ def _sync_get_session_title(username: str, session_id: str) -> str:
         with open(filepath, "r", encoding="utf-8") as f:
             data = json.load(f)
             return data.get("title", "Chat")
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Failed to read title from {filepath} for user '{username}': {e}")
         return "Chat"
 
 async def get_session_title(username: str, session_id: str) -> str:
@@ -225,8 +246,8 @@ def _sync_delete_session(username: str, session_id: str):
         new_dir = os.path.join(parent_dir, f"DELETED_{int(time.time())}_{os.path.basename(session_dir)}")
         try:
             os.rename(session_dir, new_dir)
-        except OSError:
-            pass
+        except OSError as e:
+            logger.error(f"Failed to rename/delete session directory {session_dir} to {new_dir}: {e}", exc_info=True)
 
 async def delete_session(username: str, session_id: str):
     async with session_locks[session_id]:
@@ -244,7 +265,8 @@ def _sync_get_session_settings(username: str, session_id: str) -> dict:
                 "prompt": data.get("system_prompt", ""),
                 "include_gps": data.get("include_gps", False)
             }
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Failed to load settings from {filepath} for user '{username}': {e}", exc_info=True)
         return {"prompt": "", "include_gps": False}
 
 async def get_session_settings(username: str, session_id: str) -> dict:
@@ -254,6 +276,7 @@ async def get_session_settings(username: str, session_id: str) -> dict:
 def _sync_update_session_settings(username: str, session_id: str, prompt: str, include_gps: bool):
     filepath = get_session_filepath(username, session_id)
     if not os.path.exists(filepath):
+        logger.warning(f"Cannot update settings: session file {filepath} does not exist for user '{username}'")
         return
         
     try:
@@ -265,8 +288,8 @@ def _sync_update_session_settings(username: str, session_id: str, prompt: str, i
         
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"Failed to update session settings in {filepath} for user '{username}': {e}", exc_info=True)
 
 async def update_session_settings(username: str, session_id: str, prompt: str, include_gps: bool):
     async with session_locks[session_id]:
@@ -286,8 +309,8 @@ def _sync_cleanup_deleted_sessions(username: str, days: int = 30):
                 last_run = float(f.read().strip())
                 if current_time - last_run < 86400:
                     return
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to read cleanup timestamp {last_run_file}: {e}")
             
     sessions_dir = os.path.join(user_dir, "sessions")
     if not os.path.exists(sessions_dir):
@@ -306,20 +329,20 @@ def _sync_cleanup_deleted_sessions(username: str, days: int = 30):
         else:
             try:
                 folder_time = os.stat(dir_path).st_mtime
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to stat directory {dir_path}: {e}")
                 
         if folder_time is not None and current_time - folder_time > days * 86400:
             try:
                 shutil.rmtree(dir_path)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to delete expired session folder {dir_path}: {e}")
                 
     try:
         with open(last_run_file, "w", encoding="utf-8") as f:
             f.write(str(current_time))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to write cleanup timestamp {last_run_file}: {e}")
 
 async def cleanup_deleted_sessions(username: str, days: int = 30):
     await asyncio.to_thread(_sync_cleanup_deleted_sessions, username, days)

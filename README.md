@@ -113,6 +113,7 @@ docker-compose run --rm web pytest tests/
 
 
 This will run all tests (both unit tests and Playwright E2E browser tests) together:
+- Centralized error logging, observability & exception handlers (`tests/test_logging.py`)
 - Local storage logic, thumbnail creation & $O(1)$ session lookups (`tests/test_storage.py`, `tests/test_performance_storage.py`)
 - API endpoints, upload thumbnail routing & caching headers (`tests/test_main.py`, `tests/test_upload_thumbnails_and_caching.py`, `tests/test_thinking_status.py`, `tests/test_chat_stability.py`, `tests/test_streaming.py`)
 - Progressive rendering, thumbnail links & infinite scroll integrity (`tests/test_progressive_rendering.py`, `tests/test_scroll_button.py`)

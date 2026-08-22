@@ -134,20 +134,23 @@ class AgyClient:
             filename = f"chat_context_{uuid.uuid4().hex[:8]}.txt"
             history_file_path = os.path.join(cwd if cwd else "/tmp", filename)
             
-            with open(history_file_path, 'w', encoding='utf-8') as f:
-                f.write("<chat_history>\n")
-                for msg in context_messages:
-                    role = "User" if msg.get("is_user") else "AI"
-                    timestamp = msg.get('timestamp', '')
-                    ts_str = f"[{timestamp}] " if timestamp else ""
-                    f.write(f"{ts_str}{role}: {msg.get('text')}\n")
-                f.write("</chat_history>\n")
-            
-            t_write_end = time.perf_counter()
-            file_size = os.path.getsize(history_file_path)
-            logger.info(f"Schreiben der Kontextdatei ({file_size} Bytes) dauerte: {t_write_end - t_write_start:.4f}s")
-            
-            prompt += f"Lies zwingend die Datei {history_file_path} für den bisherigen Chat-Verlauf!\n\n"
+            try:
+                with open(history_file_path, 'w', encoding='utf-8') as f:
+                    f.write("<chat_history>\n")
+                    for msg in context_messages:
+                        role = "User" if msg.get("is_user") else "AI"
+                        timestamp = msg.get('timestamp', '')
+                        ts_str = f"[{timestamp}] " if timestamp else ""
+                        f.write(f"{ts_str}{role}: {msg.get('text')}\n")
+                    f.write("</chat_history>\n")
+                
+                t_write_end = time.perf_counter()
+                file_size = os.path.getsize(history_file_path)
+                logger.info(f"Schreiben der Kontextdatei ({file_size} Bytes) dauerte: {t_write_end - t_write_start:.4f}s")
+                prompt += f"Lies zwingend die Datei {history_file_path} für den bisherigen Chat-Verlauf!\n\n"
+            except Exception as e:
+                logger.error(f"Failed to write chat context file {history_file_path}: {e}", exc_info=True)
+                history_file_path = None
             
         prompt += "<current_message>\n"
         if new_message:
@@ -217,9 +220,15 @@ class AgyClient:
                             "usage": result_data.get("usage")
                         }
                 except json.JSONDecodeError:
+                    logger.debug(f"Non-JSON output from agy stream: {line_str}")
                     continue
 
             await process.wait()
+
+            if process.returncode != 0:
+                stderr_bytes = await process.stderr.read()
+                stderr_text = stderr_bytes.decode('utf-8', errors='replace').strip()
+                logger.error(f"agy stream process exited with code {process.returncode}: {stderr_text}")
 
             if not result_emitted:
                 yield {
@@ -240,7 +249,7 @@ class AgyClient:
                 "context_truncated": False
             }
         except Exception as e:
-            logger.error(f"Error in stream_message: {e}")
+            logger.error(f"Error in stream_message: {e}", exc_info=True)
             yield {
                 "type": "done",
                 "reply": f"Fehler bei der Streaming-Verarbeitung: {e}",
@@ -248,7 +257,10 @@ class AgyClient:
             }
         finally:
             if history_file_path and os.path.exists(history_file_path):
-                os.remove(history_file_path)
+                try:
+                    os.remove(history_file_path)
+                except OSError as e:
+                    logger.warning(f"Failed to remove temp context file {history_file_path}: {e}")
 
     async def process_message(self, context_messages: list, new_message: str, image_paths: list = None, system_prompt: str = None, cwd: str = None) -> dict:
         """
@@ -305,7 +317,10 @@ class AgyClient:
                 output = re.sub(r'<thought>(.*?)</thought>', replace_thought, output, flags=re.DOTALL).strip()
                 
                 if history_file_path and os.path.exists(history_file_path):
-                    os.remove(history_file_path)
+                    try:
+                        os.remove(history_file_path)
+                    except OSError as e:
+                        logger.warning(f"Failed to remove temp context file {history_file_path}: {e}")
                     
                 return {
                     "reply": output,
@@ -330,18 +345,27 @@ class AgyClient:
                         "reply": f"Entschuldigung, es gab einen internen Fehler bei der Verarbeitung nach {MAX_RETRIES} erfolglosen Versuchen.",
                         "context_truncated": context_truncated
                     }
+            except Exception as e:
+                logger.error(f"Unexpected error in process_message: {e}", exc_info=True)
+                return {
+                    "reply": f"Entschuldigung, es gab einen internen Fehler: {e}",
+                    "context_truncated": context_truncated
+                }
 
     async def generate_chat_icon(self, title: str, output_path: str):
         def write_fallback():
-            initials = "".join([w[0].upper() for w in title.split() if w])[:2]
-            if not initials:
-                initials = "NC"
-            svg_content = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+            try:
+                initials = "".join([w[0].upper() for w in title.split() if w])[:2]
+                if not initials:
+                    initials = "NC"
+                svg_content = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
     <rect x="0" y="0" width="100" height="100" rx="20" ry="20" fill="#10b981" />
     <text x="50" y="50" fill="white" font-size="40" font-family="sans-serif" text-anchor="middle" dominant-baseline="central">{initials}</text>
 </svg>'''
-            with open(output_path, "w", encoding="utf-8") as f:
-                f.write(svg_content)
+                with open(output_path, "w", encoding="utf-8") as f:
+                    f.write(svg_content)
+            except Exception as e:
+                logger.error(f"Failed to write fallback icon to {output_path}: {e}", exc_info=True)
 
         prompt = (
             f"Generiere ein rechteckiges Avatar-Icon für einen Chat mit dem Titel '{title}'. "
@@ -373,13 +397,18 @@ class AgyClient:
                 match = re.search(r'(<svg.*?</svg>)', output, re.DOTALL | re.IGNORECASE)
                 if match:
                     svg_code = match.group(1)
-                    with open(output_path, "w", encoding="utf-8") as f:
-                        f.write(svg_code)
-                    return
+                    try:
+                        with open(output_path, "w", encoding="utf-8") as f:
+                            f.write(svg_code)
+                        return
+                    except Exception as e:
+                        logger.error(f"Failed to save generated icon SVG to {output_path}: {e}", exc_info=True)
+                        write_fallback()
+                        return
             logger.warning(f"Failed to generate icon with agy, using fallback. Output was: {stdout_bytes}")
             write_fallback()
         except Exception as e:
-            logger.error(f"Error generating chat icon: {e}")
+            logger.error(f"Error generating chat icon: {e}", exc_info=True)
             write_fallback()
 
 agy_client = AgyClient()

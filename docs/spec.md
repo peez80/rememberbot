@@ -58,6 +58,10 @@ Die Anwendung ist ein generischer, agentischer KI-Chat mit persistentem Gedächt
   - Hintergrund-Absicherung der KI-Verarbeitung und Persistierung via `asyncio.shield`.
   - Sofortige Registrierung aktiver Submits (`activeSubmittingSessionId`) und Request-Sequenzzähler (`selectSessionCounter`) schützen den Chat-Container vor DOM-Wipes durch parallele `visibilitychange`-Events oder verzögerte Hintergrund-Fetches.
   - Erhalt der Sidebar-DOM-Struktur zur Vermeidung von Flackern beim Session-Wechsel.
+- **Fehlerbehandlung & Observability:**
+  - **Globale Exception-Handler:** Zentrales Abfangen unbehandelter 500-Fehler (`logger.error` mit vollem Stacktrace), Pydantic-Validierungsfehler (422 mit Feldinformationen) und HTTP-Exceptions (4xx/5xx).
+  - **Keine lautlosen Fehler (Zero Silent Failures):** Vollständige Fehlerprotokollierung aller I/O- und JSON-Operationen im Storage-Layer (`storage.py`) sowie Stderr-Erfassung bei CLI-Stream-Abbrüchen (`agy_client.py`).
+  - **Hintergrund-Task-Überwachung:** Abfangen und Loggen von Ausnahmen in `fire_and_forget`-Tasks via Done-Callback.
 - **agy Parameter:** Es werden Standardparameter (`--prompt`, `--output-format stream-json`, `--dangerously-skip-permissions`) verwendet. Der Aufruf ist in der Klasse `AgyClient` gekapselt.
 
 
