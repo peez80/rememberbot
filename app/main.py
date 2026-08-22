@@ -290,6 +290,38 @@ async def update_title_endpoint(session_id: str, req: SessionTitleRequest, usern
     fire_and_forget(agy_client.generate_chat_icon(req.title, target_path))
     return {"success": True}
 
+def _format_local_links(text: str, username: str, session_id: str) -> str:
+    """Rewrite raw file and internal storage links to application download endpoints."""
+    def replace_local_links(match):
+        label = match.group(1)
+        href = match.group(2)
+        if href.startswith("file://"):
+            href = href[7:]
+        data_prefix = f"/app/data/{username}/sessions/{session_id}/data/"
+        uploads_prefix = f"/app/data/{username}/sessions/{session_id}/uploads/"
+        if href.startswith(data_prefix):
+            rel_path = href[len(data_prefix):]
+            encoded = urllib.parse.quote(rel_path, safe='/')
+            return f"[{label}](/app/data/{username}/{session_id}/data/{encoded})"
+        if href.startswith(uploads_prefix):
+            rel_path = href[len(uploads_prefix):]
+            encoded = urllib.parse.quote(rel_path, safe='/')
+            return f"[{label}](/uploads/{session_id}/{encoded})"
+        if not href.startswith(("http", "/", "data:", "#", "mailto:")):
+            encoded = urllib.parse.quote(href, safe='/')
+            return f"[{label}](/app/data/{username}/{session_id}/data/{encoded})"
+        return match.group(0)
+
+    return re.sub(r'\[([^\]]+)\]\(([^)]+)\)', replace_local_links, text)
+
+def _format_thoughts_for_storage(text: str) -> str:
+    """Convert <thought>...</thought> blocks into collapsible <details> HTML elements."""
+    def replace_thought(match):
+        content = match.group(1).strip()
+        return f"<details class='ai-reasoning'>\n  <summary>Gedankengang der KI</summary>\n  <div class='reasoning-content'>\n{content}\n  </div>\n</details>\n"
+    
+    return re.sub(r'<thought>(.*?)</thought>', replace_thought, text, flags=re.DOTALL).strip()
+
 @app.post("/api/sessions/{session_id}/chat")
 async def chat_endpoint(
     session_id: str,
@@ -386,7 +418,9 @@ async def chat_endpoint(
     is_stream = stream.lower() == "true" or "text/event-stream" in request.headers.get("accept", "")
 
     if is_stream:
-        async def sse_generator():
+        event_queue = asyncio.Queue()
+
+        async def stream_task_runner():
             try:
                 user_data_dir = os.path.abspath(os.path.join(DATA_DIR, username, "sessions", session_id, "data"))
                 os.makedirs(user_data_dir, exist_ok=True)
@@ -419,40 +453,13 @@ async def chat_endpoint(
                     if event.get("type") == "delta":
                         text_chunk = event.get("text", "")
                         full_reply += text_chunk
-                        yield f"data: {json.dumps({'type': 'delta', 'text': text_chunk})}\n\n"
+                        await event_queue.put({"type": "delta", "text": text_chunk})
                     elif event.get("type") == "done":
                         full_reply = event.get("reply", full_reply)
                         context_truncated = event.get("context_truncated", False)
 
-                # --- Fix local file links ---
-                def replace_local_links(match):
-                    text = match.group(1)
-                    href = match.group(2)
-                    if href.startswith("file://"):
-                        href = href[7:]
-                    data_prefix = f"/app/data/{username}/sessions/{session_id}/data/"
-                    uploads_prefix = f"/app/data/{username}/sessions/{session_id}/uploads/"
-                    if href.startswith(data_prefix):
-                        rel_path = href[len(data_prefix):]
-                        encoded = urllib.parse.quote(rel_path, safe='/')
-                        return f"[{text}](/app/data/{username}/{session_id}/data/{encoded})"
-                    if href.startswith(uploads_prefix):
-                        rel_path = href[len(uploads_prefix):]
-                        encoded = urllib.parse.quote(rel_path, safe='/')
-                        return f"[{text}](/uploads/{session_id}/{encoded})"
-                    if not href.startswith(("http", "/", "data:", "#", "mailto:")):
-                        encoded = urllib.parse.quote(href, safe='/')
-                        return f"[{text}](/app/data/{username}/{session_id}/data/{encoded})"
-                    return match.group(0)
-
-                full_reply = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', replace_local_links, full_reply)
-
-                # Format thoughts if needed for final history storage
-                def replace_thought(match):
-                    content = match.group(1).strip()
-                    return f"<details class='ai-reasoning'>\n  <summary>Gedankengang der KI</summary>\n  <div class='reasoning-content'>\n{content}\n  </div>\n</details>\n"
-                
-                saved_reply = re.sub(r'<thought>(.*?)</thought>', replace_thought, full_reply, flags=re.DOTALL).strip()
+                saved_reply = _format_local_links(full_reply, username, session_id)
+                saved_reply = _format_thoughts_for_storage(saved_reply)
                 if not saved_reply:
                     saved_reply = full_reply
 
@@ -461,17 +468,35 @@ async def chat_endpoint(
                     "is_user": False,
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 }
-                await asyncio.shield(save_session_message(username, session_id, ai_msg_data))
+                await save_session_message(username, session_id, ai_msg_data)
 
-                yield f"data: {json.dumps({'type': 'done', 'reply': saved_reply, 'context_truncated': context_truncated, 'timestamp': ai_msg_data['timestamp']})}\n\n"
-            except asyncio.CancelledError:
-                logger.info(f"SSE client disconnected for session {session_id} (user '{username}')")
-                raise
+                await event_queue.put({
+                    "type": "done", 
+                    "reply": saved_reply, 
+                    "context_truncated": context_truncated, 
+                    "timestamp": ai_msg_data["timestamp"]
+                })
             except Exception as e:
-                logger.error(f"Error in SSE stream for session {session_id} (user '{username}'): {e}", exc_info=True)
-                yield f"data: {json.dumps({'type': 'error', 'error': 'Fehler bei der Antwortgenerierung'})}\n\n"
+                logger.error(f"Error in background stream processing for session {session_id} (user '{username}'): {e}", exc_info=True)
+                await event_queue.put({"type": "error", "error": "Fehler bei der Antwortgenerierung"})
             finally:
+                event_queue.put_nowait(None)
                 _active_chat_sessions.discard(session_key)
+
+        bg_task = asyncio.create_task(stream_task_runner())
+        _active_tasks.add(bg_task)
+        bg_task.add_done_callback(_handle_bg_task_done)
+
+        async def sse_generator():
+            try:
+                while True:
+                    event = await event_queue.get()
+                    if event is None:
+                        break
+                    yield f"data: {json.dumps(event)}\n\n"
+            except asyncio.CancelledError:
+                logger.info(f"SSE client disconnected for session {session_id} (user '{username}'). Background AI task continues.")
+                raise
 
         return StreamingResponse(sse_generator(), media_type="text/event-stream")
             
@@ -507,38 +532,7 @@ async def chat_endpoint(
             ai_reply = parsed_response.get("reply", "Entschuldigung, ich habe das nicht verstanden.")
             context_truncated = parsed_response.get("context_truncated", False)
             
-            # --- Fix local file links ---
-            def replace_local_links(match):
-                text = match.group(1)
-                href = match.group(2)
-                
-                # Bereinige file:// Präfixe
-                if href.startswith("file://"):
-                    href = href[7:]
-                    
-                data_prefix = f"/app/data/{username}/sessions/{session_id}/data/"
-                uploads_prefix = f"/app/data/{username}/sessions/{session_id}/uploads/"
-                
-                # Korrigiere KI-generierte absolute Pfade in die korrekten API-Download-Routen
-                if href.startswith(data_prefix):
-                    rel_path = href[len(data_prefix):]
-                    encoded = urllib.parse.quote(rel_path, safe='/')
-                    return f"[{text}](/app/data/{username}/{session_id}/data/{encoded})"
-                    
-                if href.startswith(uploads_prefix):
-                    rel_path = href[len(uploads_prefix):]
-                    encoded = urllib.parse.quote(rel_path, safe='/')
-                    return f"[{text}](/uploads/{session_id}/{encoded})"
-                    
-                # Wenn die KI (korrekterweise) nur den Dateinamen zurückgibt
-                if not href.startswith(("http", "/", "data:", "#", "mailto:")):
-                    encoded = urllib.parse.quote(href, safe='/')
-                    return f"[{text}](/app/data/{username}/{session_id}/data/{encoded})"
-                    
-                return match.group(0)
-
-            ai_reply = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', replace_local_links, ai_reply)
-            # --- End fix ---
+            ai_reply = _format_local_links(ai_reply, username, session_id)
 
             # Append AI reply to history
             ai_msg_data = {
@@ -561,6 +555,8 @@ async def chat_endpoint(
 
     # Shield the entire AI processing and saving pipeline against connection drops
     task = asyncio.create_task(process_and_save())
+    _active_tasks.add(task)
+    task.add_done_callback(_handle_bg_task_done)
     try:
         result = await asyncio.shield(task)
         return JSONResponse(content=result)

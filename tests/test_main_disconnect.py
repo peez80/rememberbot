@@ -167,3 +167,55 @@ async def test_user_message_persisted_immediately_even_if_stream_aborted_early(r
         assert history[0]["is_user"] is True
         assert "photo.jpg" in str(history[0]) or "/uploads/" in str(history[0])
 
+
+@pytest.mark.asyncio
+async def test_stream_disconnect_completes_and_saves_ai_reply_in_background(real_server, auth_cookies):
+    """
+    Test 4: Verify that when client disconnects during SSE streaming,
+    the background task completes execution, keeps status as processing during generation,
+    and persists the complete AI response in session history.
+    """
+    test_session = await create_test_session()
+
+    async def slow_stream(*args, **kwargs):
+        yield {"type": "delta", "text": "Teil 1 "}
+        await asyncio.sleep(1.0)
+        yield {"type": "delta", "text": "Teil 2"}
+        yield {"type": "done", "reply": "Teil 1 Teil 2", "context_truncated": False}
+
+    with patch("app.main.agy_client.stream_message", side_effect=slow_stream):
+        async with httpx.AsyncClient(base_url=real_server, cookies=auth_cookies, timeout=2.0) as client:
+            try:
+                async with client.stream(
+                    "POST",
+                    f"/api/sessions/{test_session}/chat",
+                    data={"message": "Hallo Stream", "stream": "true"},
+                    headers={"Accept": "text/event-stream"}
+                ) as response:
+                    # Client reads first chunk and disconnects immediately
+                    async for chunk in response.aiter_bytes():
+                        break
+            except Exception:
+                pass
+
+            # Immediately after client disconnects, session should still be processing in background
+            status_res = await client.get(f"/api/sessions/{test_session}/status")
+            assert status_res.status_code == 200
+            assert status_res.json()["is_processing"] is True, "Session should report is_processing: true while background task is running"
+
+            # Wait for background task to complete
+            await asyncio.sleep(1.5)
+
+            # Status should now be finished
+            status_after = await client.get(f"/api/sessions/{test_session}/status")
+            assert status_after.json()["is_processing"] is False
+
+            # Session history must contain BOTH messages: User and AI reply
+            history = await get_session_history("testuser", test_session)
+            assert len(history) == 2, f"Expected 2 messages (User + AI), but got {len(history)}: {history}"
+            assert history[0]["is_user"] is True
+            assert history[0]["text"] == "Hallo Stream"
+            assert history[1]["is_user"] is False
+            assert history[1]["text"] == "Teil 1 Teil 2"
+
+
