@@ -22,6 +22,7 @@ I loved the agentic behavior of the `gemini` / `antigravity` CLI, and I wanted t
 - **High-Performance Chat Loading**: Lightning-fast session switching with progressive rendering (20-message initial batch with seamless infinite scroll) and $O(1)$ direct session lookup.
 - **Automatic Thumbnail Generation & Caching**: Fast image loading with on-demand generated thumbnails (max 400px, EXIF-transposed, transparent-safe JPEG), long-term HTTP caching (`immutable`), and full-resolution viewing in a new tab.
 - **Universal File & Image Support**: Attach arbitrary files (documents, PDFs, spreadsheets, CSVs, code files, archives) and pictures (with or without text captions) for automatic recognition and processing. Supports file attachments via dedicated 3-button bar (📎 Paperclip, 🖼️ Gallery, 📷 Mobile Camera), drag-and-drop, and clipboard paste. The AI agent can inspect and work with uploaded files directly.
+- **Session Export & Import (ZIP Archives)**: Easily back up or migrate complete chat sessions as compact ZIP archives (including messages, settings, custom icons, uploaded attachments, and AI-generated files, while omitting regenerable thumbnails). Import archives into fresh chat sessions with automatic URL and path remapping, ZipSlip protection, and cross-user/cross-instance portability.
 - **Smart Parsing**: Powered by Google's Gemini models via the `antigravity-cli`, extracting structured data automatically.
 - **Responsive Web App**: Built with vanilla HTML/JS/CSS for a fast, responsive user experience.
 

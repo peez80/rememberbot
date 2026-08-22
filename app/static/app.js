@@ -38,6 +38,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const gpsSettingInput = document.getElementById("gps-setting-input");
     const closePromptBtn = document.getElementById("close-prompt-btn");
     const savePromptBtn = document.getElementById("save-prompt-btn");
+    const exportSessionBtn = document.getElementById("export-session-btn");
+    const importSessionBtn = document.getElementById("import-session-btn");
+    const importSessionInput = document.getElementById("import-session-input");
+    const importStatusText = document.getElementById("import-status-text");
 
     let selectedFiles = [];
     let currentSessionId = localStorage.getItem("currentSessionId");
@@ -1214,9 +1218,92 @@ document.addEventListener("DOMContentLoaded", () => {
         if (session) {
             document.getElementById("chat-title-input").value = session.title || "";
         }
+
+        if (exportSessionBtn) {
+            exportSessionBtn.style.display = "inline-flex";
+        }
+        if (importSessionBtn) {
+            const isNewChat = (!currentSessionHistory || currentSessionHistory.length === 0);
+            importSessionBtn.style.display = isNewChat ? "inline-flex" : "none";
+        }
+        if (importStatusText) {
+            importStatusText.style.display = "none";
+            importStatusText.textContent = "";
+        }
         
         systemPromptModal.style.display = "flex";
     });
+
+    if (exportSessionBtn) {
+        exportSessionBtn.addEventListener("click", () => {
+            if (!currentSessionId) return;
+            const downloadUrl = `/api/sessions/${currentSessionId}/export`;
+            const link = document.createElement("a");
+            link.href = downloadUrl;
+            link.setAttribute("download", "");
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        });
+    }
+
+    if (importSessionBtn && importSessionInput) {
+        importSessionBtn.addEventListener("click", () => {
+            importSessionInput.value = "";
+            importSessionInput.click();
+        });
+
+        importSessionInput.addEventListener("change", async (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (!file || !currentSessionId) return;
+
+            importSessionBtn.disabled = true;
+            if (importStatusText) {
+                importStatusText.style.display = "block";
+                importStatusText.style.color = "var(--text-muted)";
+                importStatusText.textContent = "Importiere Chat-Archiv...";
+            }
+
+            try {
+                const formData = new FormData();
+                formData.append("file", file);
+
+                const response = await fetch(`/api/sessions/${currentSessionId}/import`, {
+                    method: "POST",
+                    body: formData
+                });
+
+                if (response.ok) {
+                    systemPromptModal.style.display = "none";
+                    await loadSessions();
+                    await selectSession(currentSessionId, true);
+                } else {
+                    let errMsg = "Fehler beim Importieren des Chats.";
+                    try {
+                        const errData = await response.json();
+                        if (errData.detail || errData.error) {
+                            errMsg = errData.detail || errData.error;
+                        }
+                    } catch (_) {}
+                    if (importStatusText) {
+                        importStatusText.textContent = errMsg;
+                        importStatusText.style.color = "var(--danger-color, #ef4444)";
+                    }
+                    alert(errMsg);
+                }
+            } catch (err) {
+                console.error("Error importing session", err);
+                if (importStatusText) {
+                    importStatusText.textContent = "Verbindungsfehler beim Importieren.";
+                    importStatusText.style.color = "var(--danger-color, #ef4444)";
+                }
+                alert("Verbindungsfehler beim Importieren.");
+            } finally {
+                importSessionBtn.disabled = false;
+                importSessionInput.value = "";
+            }
+        });
+    }
 
     closePromptBtn.addEventListener("click", () => {
         systemPromptModal.style.display = "none";

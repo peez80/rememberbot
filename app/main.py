@@ -31,7 +31,8 @@ from .storage import (
     get_session_settings, update_session_settings, init_user_storage,
     get_session_icon_path, get_session_icon_target_path,
     cleanup_deleted_sessions,
-    check_session_exists, get_session_title, generate_thumbnail
+    check_session_exists, get_session_title, generate_thumbnail,
+    export_session_archive, import_session_archive
 )
 
 app = FastAPI(title="RememberBot")
@@ -290,6 +291,70 @@ async def update_title_endpoint(session_id: str, req: SessionTitleRequest, usern
     target_path = get_session_icon_target_path(username, session_id)
     fire_and_forget(agy_client.generate_chat_icon(req.title, target_path))
     return {"success": True}
+
+# Session Export & Import Endpoints
+@app.get("/api/sessions/{session_id}/export")
+async def export_session_endpoint(session_id: str, username: str = Depends(get_current_user)):
+    if not await check_session_exists(username, session_id):
+        logger.warning(f"Export requested for non-existent session {session_id} by user '{username}'")
+        raise HTTPException(status_code=404, detail="Session not found")
+        
+    try:
+        zip_bytes = await export_session_archive(username, session_id)
+        title = await get_session_title(username, session_id)
+        safe_title = re.sub(r'[^a-zA-Z0-9_-]', '_', title)[:30] or "chat"
+        filename = f"chat_{safe_title}_{session_id[:8]}.zip"
+        
+        logger.info(f"User '{username}' exported session {session_id} as '{filename}'")
+        return Response(
+            content=zip_bytes,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-cache"
+            }
+        )
+    except FileNotFoundError:
+        logger.warning(f"Export failed: session {session_id} not found on disk for user '{username}'")
+        raise HTTPException(status_code=404, detail="Session not found")
+    except Exception as e:
+        logger.error(f"Failed to export session {session_id} for user '{username}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Fehler beim Exportieren der Session")
+
+@app.post("/api/sessions/{session_id}/import")
+async def import_session_endpoint(session_id: str, file: UploadFile = File(...), username: str = Depends(get_current_user)):
+    if not await check_session_exists(username, session_id):
+        logger.warning(f"Import requested for non-existent session {session_id} by user '{username}'")
+        raise HTTPException(status_code=404, detail="Session not found")
+        
+    session_key = (username, session_id)
+    if session_key in _active_chat_sessions:
+        logger.warning(f"Rejected import into active session {session_id} by user '{username}'")
+        raise HTTPException(status_code=400, detail="Session wird gerade verarbeitet")
+        
+    try:
+        zip_bytes = await file.read()
+        if not zip_bytes:
+            logger.warning(f"Empty file uploaded for import in session {session_id} by user '{username}'")
+            raise HTTPException(status_code=400, detail="Leere Datei hochgeladen")
+            
+        result = await import_session_archive(username, session_id, zip_bytes)
+        logger.info(f"User '{username}' imported session archive into session {session_id}")
+        return {
+            "success": True,
+            "id": session_id,
+            "title": result.get("title", "Importierter Chat"),
+            "has_icon": result.get("has_icon", False)
+        }
+    except HTTPException:
+        raise
+    except ValueError as ve:
+        logger.warning(f"Validation error during import into session {session_id} by user '{username}': {ve}")
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Failed to import session archive into {session_id} for user '{username}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Fehler beim Importieren der Session")
+
 
 def _format_local_links(text: str, username: str, session_id: str) -> str:
     """Rewrite raw file and internal storage links to application download endpoints."""

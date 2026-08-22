@@ -69,6 +69,11 @@ Die Anwendung ist ein generischer, agentischer KI-Chat mit persistentem Gedächt
   - **Keine lautlosen Fehler (Zero Silent Failures):** Vollständige Fehlerprotokollierung aller I/O- und JSON-Operationen im Storage-Layer (`storage.py`) sowie Stderr-Erfassung bei CLI-Stream-Abbrüchen (`agy_client.py`).
   - **CLI-Lifecycle-Logging:** Transparente Protokollierung von Start (PID, Modus/Versuch) und Ende (gemessene Ausführungszeit in Sekunden, Exit-Code) aller `agy`-CLI-Subprozesse auf `INFO`-Level.
   - **Hintergrund-Task-Überwachung:** Abfangen und Loggen von Ausnahmen in `fire_and_forget`-Tasks via Done-Callback.
+- **Session Export & Import (ZIP-Archiv) & Portabilität:**
+  - **Kompakte Archivierung:** Vollständiger Export einer Chat-Session als ZIP-Archiv inklusive `session.json`, `icon.svg` (falls vorhanden), aller hochgeladenen Dokumente/Bilder (`uploads/`) und KI-generierter Ergebnisdateien (`data/`). Wiederherstellbare Zwischendateien (`thumbnails/`) werden zur Einsparung von Archivgröße und Speicherplatz explizit ausgeschlossen.
+  - **Sicherheit & ZipSlip-Schutz:** Strenges Abweisen bösartiger Pfade mit relativen Pfadkomponenten (`..`) oder absoluten Pfaden beim Entpacken.
+  - **Universelles Remapping:** Vollständiges und automatisches Umschreiben aller Session-IDs, Benutzernamen, lokaler Dateipfade (`files[i].path`) und Markdown-Verlinkungen (`/uploads/...`, `/app/data/...`) im Nachrichtentext auf die Ziel-Session und den Ziel-Benutzer.
+  - **Kontextsensitive UI-Steuerung:** Im Einstellungs-Modal (`Chat-Einstellungen`) ist der Export-Button immer verfügbar, der Import-Button wird zur Vermeidung versehentlichen Datenverlusts ausschließlich bei neuen Chats mit leerem Verlauf angezeigt.
 - **agy Parameter:** Es werden Standardparameter (`--prompt`, `--output-format stream-json`, `--dangerously-skip-permissions`) verwendet. Der Aufruf ist in der Klasse `AgyClient` gekapselt.
 
 

@@ -130,7 +130,20 @@
                     <input type="checkbox" id="gps-setting-input">
                     <label for="gps-setting-input" style="font-size: 0.9rem; font-weight: 500;">Aktuellen Standort (GPS) mit Nachrichten senden</label>
                 </div>
-                <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                <div class="session-modal-actions">
+                    <label class="modal-section-label">Chat-Daten verwalten</label>
+                    <div class="session-actions-buttons">
+                        <button type="button" class="secondary-btn" id="export-session-btn" title="Chat als ZIP exportieren">
+                            <i class="ph-bold ph-download-simple"></i> Chat exportieren
+                        </button>
+                        <button type="button" class="secondary-btn" id="import-session-btn" title="Chat aus ZIP importieren">
+                            <i class="ph-bold ph-upload-simple"></i> Chat importieren
+                        </button>
+                        <input type="file" id="import-session-input" accept=".zip,application/zip" style="display: none;">
+                    </div>
+                    <div id="import-status-text" class="import-status-text" style="display: none;"></div>
+                </div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 0.5rem;">
                     <button type="button" class="secondary-btn" id="close-prompt-btn">Abbrechen</button>
                     <button type="submit" class="primary-btn" id="save-prompt-btn">Speichern</button>
                 </div>
@@ -138,6 +151,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=10"></script>
+    <script src="/static/app.js?v=11"></script>
 </body>
 </html>
