@@ -65,6 +65,7 @@ Die Anwendung ist ein generischer, agentischer KI-Chat mit persistentem Gedächt
 - **Fehlerbehandlung & Observability:**
   - **Globale Exception-Handler:** Zentrales Abfangen unbehandelter 500-Fehler (`logger.error` mit vollem Stacktrace), Pydantic-Validierungsfehler (422 mit Feldinformationen) und HTTP-Exceptions (4xx/5xx).
   - **Keine lautlosen Fehler (Zero Silent Failures):** Vollständige Fehlerprotokollierung aller I/O- und JSON-Operationen im Storage-Layer (`storage.py`) sowie Stderr-Erfassung bei CLI-Stream-Abbrüchen (`agy_client.py`).
+  - **CLI-Lifecycle-Logging:** Transparente Protokollierung von Start (PID, Modus/Versuch) und Ende (gemessene Ausführungszeit in Sekunden, Exit-Code) aller `agy`-CLI-Subprozesse auf `INFO`-Level.
   - **Hintergrund-Task-Überwachung:** Abfangen und Loggen von Ausnahmen in `fire_and_forget`-Tasks via Done-Callback.
 - **agy Parameter:** Es werden Standardparameter (`--prompt`, `--output-format stream-json`, `--dangerously-skip-permissions`) verwendet. Der Aufruf ist in der Klasse `AgyClient` gekapselt.
 

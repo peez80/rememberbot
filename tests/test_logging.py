@@ -280,3 +280,79 @@ def test_auth_and_security_logging(caplog, tmp_path, monkeypatch):
     finally:
         app.dependency_overrides.pop(get_current_user, None)
 
+
+@pytest.mark.asyncio
+async def test_agy_stream_logging_start_and_finish(caplog):
+    """Verify that stream_message logs INFO messages when agy CLI starts and finishes."""
+    mock_process = AsyncMock()
+    mock_process.stdout.readline = AsyncMock(side_effect=[
+        b'{"event":"step_update","step_update":{"text_delta":"Hi"}}\n',
+        b'{"event":"result","result":{"response":"Hi"}}\n',
+        b''
+    ])
+    mock_process.stderr.read = AsyncMock(return_value=b'')
+    mock_process.wait = AsyncMock(return_value=0)
+    mock_process.returncode = 0
+    mock_process.pid = 12345
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+        with caplog.at_level(logging.INFO):
+            chunks = [c async for c in agy_client.stream_message([], "hello")]
+            assert len(chunks) == 2
+
+            assert any(
+                ("Starte agy CLI (Stream)" in record.message or "agy CLI (Stream) gestartet" in record.message)
+                for record in caplog.records if record.levelno == logging.INFO
+            )
+            assert any(
+                ("agy CLI (Stream) beendet in" in record.message and "Exit-Code: 0" in record.message)
+                for record in caplog.records if record.levelno == logging.INFO
+            )
+
+
+@pytest.mark.asyncio
+async def test_agy_process_message_logging_start_and_finish(caplog, tmp_path):
+    """Verify that process_message logs INFO messages when agy CLI starts and finishes."""
+    mock_process = AsyncMock()
+    mock_process.communicate = AsyncMock(return_value=(b"Response text", b""))
+    mock_process.returncode = 0
+    mock_process.pid = 23456
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+        with patch("app.agy_client.os.remove"):
+            with caplog.at_level(logging.INFO):
+                res = await agy_client.process_message([], "hello", cwd=str(tmp_path))
+                assert res["reply"] == "Response text"
+
+                assert any(
+                    ("Starte agy CLI" in record.message or "agy CLI gestartet" in record.message)
+                    for record in caplog.records if record.levelno == logging.INFO
+                )
+                assert any(
+                    ("agy CLI Ausführung" in record.message and "beendet in" in record.message and "Exit-Code: 0" in record.message)
+                    for record in caplog.records if record.levelno == logging.INFO
+                )
+
+
+@pytest.mark.asyncio
+async def test_agy_generate_icon_logging_start_and_finish(caplog, tmp_path):
+    """Verify that generate_chat_icon logs INFO messages when agy CLI starts and finishes."""
+    mock_process = AsyncMock()
+    mock_process.communicate = AsyncMock(return_value=(b"<svg><rect/></svg>", b""))
+    mock_process.returncode = 0
+    mock_process.pid = 34567
+
+    target_file = tmp_path / "test_icon.svg"
+    with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+        with caplog.at_level(logging.INFO):
+            await agy_client.generate_chat_icon("My Test Session", str(target_file))
+
+            assert any(
+                ("Starte agy CLI für Icon-Generierung" in record.message or "agy CLI für Icon-Generierung gestartet" in record.message)
+                for record in caplog.records if record.levelno == logging.INFO
+            )
+            assert any(
+                ("agy CLI für Icon-Generierung beendet in" in record.message and "Exit-Code: 0" in record.message)
+                for record in caplog.records if record.levelno == logging.INFO
+            )
+

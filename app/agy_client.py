@@ -182,6 +182,9 @@ class AgyClient:
             log_cmd[log_cmd.index("--prompt") + 1] = "<PROMPT_PLACEHOLDER>"
         logger.debug(f"Executing agy stream command: {' '.join(log_cmd)}")
 
+        t_start = time.perf_counter()
+        logger.info("Starte agy CLI (Stream)...")
+
         try:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -189,6 +192,7 @@ class AgyClient:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd
             )
+            logger.info(f"agy CLI (Stream) gestartet (PID: {process.pid})")
 
             full_reply = ""
             result_emitted = False
@@ -224,6 +228,8 @@ class AgyClient:
                     continue
 
             await process.wait()
+            t_end = time.perf_counter()
+            logger.info(f"agy CLI (Stream) beendet in {t_end - t_start:.2f}s (Exit-Code: {process.returncode})")
 
             if process.returncode != 0:
                 stderr_bytes = await process.stderr.read()
@@ -285,16 +291,18 @@ class AgyClient:
         for attempt in range(MAX_RETRIES + 1):
             try:
                 t_agy_start = time.perf_counter()
+                logger.info(f"Starte agy CLI (Versuch {attempt+1})...")
                 process = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=cwd
                 )
+                logger.info(f"agy CLI gestartet (PID: {process.pid}, Versuch {attempt+1})")
                 
                 stdout_bytes, stderr_bytes = await process.communicate()
                 t_agy_end = time.perf_counter()
-                logger.info(f"agy Ausführung (Versuch {attempt+1}) dauerte: {t_agy_end - t_agy_start:.2f}s")
+                logger.info(f"agy CLI Ausführung (Versuch {attempt+1}) beendet in {t_agy_end - t_agy_start:.2f}s (Exit-Code: {process.returncode})")
                 
                 stdout_text = stdout_bytes.decode('utf-8', errors='replace')
                 stderr_text = stderr_bytes.decode('utf-8', errors='replace')
@@ -378,11 +386,14 @@ class AgyClient:
         cmd = [self.executable_path, "--dangerously-skip-permissions", "--prompt", prompt]
         
         try:
+            t_icon_start = time.perf_counter()
+            logger.info(f"Starte agy CLI für Icon-Generierung ('{title}')...")
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
+            logger.info(f"agy CLI für Icon-Generierung gestartet (PID: {process.pid})")
             try:
                 stdout_bytes, _ = await asyncio.wait_for(process.communicate(), timeout=5.0)
             except asyncio.TimeoutError:
@@ -391,6 +402,9 @@ class AgyClient:
                 logger.warning("agy icon generation timed out after 5s, using fallback.")
                 write_fallback()
                 return
+
+            t_icon_end = time.perf_counter()
+            logger.info(f"agy CLI für Icon-Generierung beendet in {t_icon_end - t_icon_start:.2f}s (Exit-Code: {process.returncode})")
 
             if process.returncode == 0:
                 output = stdout_bytes.decode('utf-8', errors='replace').strip()
