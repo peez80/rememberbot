@@ -48,6 +48,15 @@ document.addEventListener("DOMContentLoaded", () => {
     let currentSessionGpsEnabled = false;
     let activeSubmittingSessionId = null;
 
+    // SEC-05: Helper to prevent XSS injection
+    const escapeHtml = (str) => {
+        if (str === null || str === undefined) return '';
+        const div = document.createElement('div');
+        div.textContent = String(str);
+        return div.innerHTML;
+    };
+
+
     // Helper functions for file formatting and types
     const getFileIconClass = (fileName) => {
         if (!fileName) return 'ph-file';
@@ -204,7 +213,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 const fileName = decodeURIComponent(linkPath.split('/').pop());
                 btn.download = fileName;
                 btn.className = "download-btn";
-                btn.innerHTML = `<i class="ph-bold ph-download-simple"></i> ${fileName}`;
+                
+                const icon = document.createElement("i");
+                icon.className = "ph-bold ph-download-simple";
+                btn.appendChild(icon);
+                btn.appendChild(document.createTextNode(" " + fileName));
+                
                 downloadContainer.appendChild(btn);
             });
         }
@@ -834,8 +848,8 @@ document.addEventListener("DOMContentLoaded", () => {
             div.innerHTML = `
                 ${iconHtml}
                 <div class="session-info">
-                    <div class="session-date">${dateStr || "Neu"}</div>
-                    <div class="session-title">${session.title}</div>
+                    <div class="session-date">${escapeHtml(dateStr || "Neu")}</div>
+                    <div class="session-title">${escapeHtml(session.title)}</div>
                 </div>
                 <button class="icon-button danger delete-btn" title="Chat löschen">
                     <i class="ph-bold ph-trash"></i>

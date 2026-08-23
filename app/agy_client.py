@@ -306,79 +306,81 @@ class AgyClient:
         
         MAX_RETRIES = 5
 
-        for attempt in range(MAX_RETRIES + 1):
-            try:
-                t_agy_start = time.perf_counter()
-                logger.info(f"Starte agy CLI (Versuch {attempt+1})...")
-                process = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=cwd
-                )
-                logger.info(f"agy CLI gestartet (PID: {process.pid}, Versuch {attempt+1})")
-                
-                stdout_bytes, stderr_bytes = await process.communicate()
-                t_agy_end = time.perf_counter()
-                logger.info(f"agy CLI Ausführung (Versuch {attempt+1}) beendet in {t_agy_end - t_agy_start:.2f}s (Exit-Code: {process.returncode})")
-                
-                stdout_text = stdout_bytes.decode('utf-8', errors='replace')
-                stderr_text = stderr_bytes.decode('utf-8', errors='replace')
-                
-                if process.returncode != 0:
-                    raise subprocess.CalledProcessError(
-                        process.returncode, cmd, output=stdout_text, stderr=stderr_text
+        try:
+            for attempt in range(MAX_RETRIES + 1):
+                try:
+                    t_agy_start = time.perf_counter()
+                    logger.info(f"Starte agy CLI (Versuch {attempt+1})...")
+                    process = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        cwd=cwd
                     )
-                
-                logger.debug(f"Raw agy stdout:\n{stdout_text}")
-                if stderr_text:
-                    logger.debug(f"Raw agy stderr:\n{stderr_text}")
-                
-                output = stdout_text.strip()
-                
-                def replace_thought(match):
-                    content = match.group(1).strip()
-                    return f"<details class='ai-reasoning'>\n  <summary>Gedankengang der KI</summary>\n  <div class='reasoning-content'>\n{content}\n  </div>\n</details>\n"
-                
-                output = re.sub(r'<thought>(.*?)</thought>', replace_thought, output, flags=re.DOTALL).strip()
-                
-                if history_file_path and os.path.exists(history_file_path):
-                    try:
-                        os.remove(history_file_path)
-                    except OSError as e:
-                        logger.warning(f"Failed to remove temp context file {history_file_path}: {e}")
+                    logger.info(f"agy CLI gestartet (PID: {process.pid}, Versuch {attempt+1})")
                     
-                return {
-                    "reply": output,
-                    "context_truncated": context_truncated
-                }
+                    stdout_bytes, stderr_bytes = await process.communicate()
+                    t_agy_end = time.perf_counter()
+                    logger.info(f"agy CLI Ausführung (Versuch {attempt+1}) beendet in {t_agy_end - t_agy_start:.2f}s (Exit-Code: {process.returncode})")
                     
-            except FileNotFoundError:
-                logger.warning("agy executable not found. Returning mock data.")
-                return {
-                    "reply": "Das ist eine Mock-Antwort, da agy nicht gefunden wurde.",
-                    "context_truncated": context_truncated
-                }
-            except subprocess.CalledProcessError as e:
-                logger.debug(f"Raw agy stdout (error):\n{e.stdout}")
-                if attempt < MAX_RETRIES:
-                    logger.warning(f"agy command failed with code {e.returncode}: {e.stderr}. Retrying {attempt + 1}/{MAX_RETRIES}...")
-                    await asyncio.sleep(1)
-                    continue
-                else:
-                    logger.error(f"agy command failed with code {e.returncode}: {e.stderr} after {MAX_RETRIES} retries.")
+                    stdout_text = stdout_bytes.decode('utf-8', errors='replace')
+                    stderr_text = stderr_bytes.decode('utf-8', errors='replace')
+                    
+                    if process.returncode != 0:
+                        raise subprocess.CalledProcessError(
+                            process.returncode, cmd, output=stdout_text, stderr=stderr_text
+                        )
+                    
+                    logger.debug(f"Raw agy stdout:\n{stdout_text}")
+                    if stderr_text:
+                        logger.debug(f"Raw agy stderr:\n{stderr_text}")
+                    
+                    output = stdout_text.strip()
+                    
+                    def replace_thought(match):
+                        content = match.group(1).strip()
+                        return f"<details class='ai-reasoning'>\n  <summary>Gedankengang der KI</summary>\n  <div class='reasoning-content'>\n{content}\n  </div>\n</details>\n"
+                    
+                    output = re.sub(r'<thought>(.*?)</thought>', replace_thought, output, flags=re.DOTALL).strip()
+                        
                     return {
-                        "reply": f"Entschuldigung, es gab einen internen Fehler bei der Verarbeitung nach {MAX_RETRIES} erfolglosen Versuchen.",
+                        "reply": output,
                         "context_truncated": context_truncated
                     }
-            except Exception as e:
-                logger.error(f"Unexpected error in process_message: {e}", exc_info=True)
-                return {
-                    "reply": f"Entschuldigung, es gab einen internen Fehler: {e}",
-                    "context_truncated": context_truncated
-                }
+                        
+                except FileNotFoundError:
+                    logger.warning("agy executable not found. Returning mock data.")
+                    return {
+                        "reply": "Das ist eine Mock-Antwort, da agy nicht gefunden wurde.",
+                        "context_truncated": context_truncated
+                    }
+                except subprocess.CalledProcessError as e:
+                    logger.debug(f"Raw agy stdout (error):\n{e.stdout}")
+                    if attempt < MAX_RETRIES:
+                        logger.warning(f"agy command failed with code {e.returncode}: {e.stderr}. Retrying {attempt + 1}/{MAX_RETRIES}...")
+                        await asyncio.sleep(1)
+                        continue
+                    else:
+                        logger.error(f"agy command failed with code {e.returncode}: {e.stderr} after {MAX_RETRIES} retries.")
+                        return {
+                            "reply": f"Entschuldigung, es gab einen internen Fehler bei der Verarbeitung nach {MAX_RETRIES} erfolglosen Versuchen.",
+                            "context_truncated": context_truncated
+                        }
+                except Exception as e:
+                    logger.error(f"Unexpected error in process_message: {e}", exc_info=True)
+                    return {
+                        "reply": f"Entschuldigung, es gab einen internen Fehler: {e}",
+                        "context_truncated": context_truncated
+                    }
+        finally:
+            if history_file_path and os.path.exists(history_file_path):
+                try:
+                    os.remove(history_file_path)
+                except OSError as e:
+                    logger.warning(f"Failed to remove temp context file {history_file_path}: {e}")
 
     async def generate_chat_icon(self, title: str, output_path: str):
+        from .storage import sanitize_svg
         def write_fallback():
             try:
                 initials = "".join([w[0].upper() for w in title.split() if w])[:2]
@@ -389,7 +391,7 @@ class AgyClient:
     <text x="50" y="50" fill="white" font-size="40" font-family="sans-serif" text-anchor="middle" dominant-baseline="central">{initials}</text>
 </svg>'''
                 with open(output_path, "w", encoding="utf-8") as f:
-                    f.write(svg_content)
+                    f.write(sanitize_svg(svg_content))
             except Exception as e:
                 logger.error(f"Failed to write fallback icon to {output_path}: {e}", exc_info=True)
 
@@ -428,7 +430,7 @@ class AgyClient:
                 output = stdout_bytes.decode('utf-8', errors='replace').strip()
                 match = re.search(r'(<svg.*?</svg>)', output, re.DOTALL | re.IGNORECASE)
                 if match:
-                    svg_code = match.group(1)
+                    svg_code = sanitize_svg(match.group(1))
                     try:
                         with open(output_path, "w", encoding="utf-8") as f:
                             f.write(svg_code)

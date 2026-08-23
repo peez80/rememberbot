@@ -6,7 +6,9 @@ import urllib.parse
 import asyncio
 import io
 from PIL import Image
+import time
 from datetime import datetime, timezone
+from collections import defaultdict
 from typing import List, Optional
 
 from fastapi import FastAPI, UploadFile, File, Form, Request, Response, HTTPException, Depends
@@ -25,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 from .agy_client import agy_client
 from .storage import (
-    init_storage, DATA_DIR,
+    init_storage, DATA_DIR, atomic_write_json, sanitize_svg,
     create_session, get_sessions, get_session_history,
     save_session_message, update_session_title, delete_session,
     get_session_settings, update_session_settings, init_user_storage,
@@ -37,6 +39,25 @@ from .storage import (
 
 app = FastAPI(title="RememberBot")
 
+# SEC-09: Global HTTP Security Headers Middleware
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(self), camera=(self), microphone=()"
+    if "Content-Security-Policy" not in response.headers:
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net https://unpkg.com; "
+            "font-src 'self' data: https://fonts.gstatic.com https://unpkg.com https://cdn.jsdelivr.net; "
+            "img-src 'self' data: blob: /uploads/ /api/; "
+            "connect-src 'self' https://unpkg.com https://cdn.jsdelivr.net;"
+        )
+    return response
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
@@ -44,6 +65,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # Global Exception Handlers for complete error observability
 @app.exception_handler(RequestValidationError)
@@ -55,7 +77,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 async def http_exception_handler(request: Request, exc: HTTPException):
     log_fn = logger.error if exc.status_code >= 500 else logger.warning
     log_fn(f"HTTP {exc.status_code} on {request.method} {request.url.path}: {exc.detail}")
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=exc.headers)
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
@@ -80,6 +102,8 @@ async def favicon():
 
 # --- Authentication & Sessions ---
 
+_failed_login_attempts: dict[str, list[float]] = defaultdict(list)
+
 def get_valid_users():
     users_file = os.path.join(DATA_DIR, "config", "users.json")
     if os.path.exists(users_file):
@@ -99,15 +123,26 @@ def load_auth_sessions():
     if os.path.exists(AUTH_SESSIONS_FILE):
         try:
             with open(AUTH_SESSIONS_FILE, "r", encoding="utf-8") as f:
-                ACTIVE_SESSIONS = json.load(f)
+                raw_sessions = json.load(f)
+            
+            # Prune expired sessions on startup
+            current_time = time.time()
+            valid_sessions = {}
+            for token, sdata in raw_sessions.items():
+                if isinstance(sdata, dict):
+                    if current_time <= sdata.get("expires_at", float('inf')):
+                        valid_sessions[token] = sdata
+                elif isinstance(sdata, str):
+                    # Legacy token backwards compatibility
+                    valid_sessions[token] = sdata
+            ACTIVE_SESSIONS = valid_sessions
         except Exception as e:
             logger.warning(f"Failed to load auth sessions from {AUTH_SESSIONS_FILE}: {e}")
             ACTIVE_SESSIONS = {}
 
 def save_auth_sessions():
     try:
-        with open(AUTH_SESSIONS_FILE, "w", encoding="utf-8") as f:
-            json.dump(ACTIVE_SESSIONS, f)
+        atomic_write_json(AUTH_SESSIONS_FILE, ACTIVE_SESSIONS)
     except Exception as e:
         logger.error(f"Failed to save auth sessions to {AUTH_SESSIONS_FILE}: {e}", exc_info=True)
 
@@ -118,7 +153,20 @@ def get_current_user(request: Request) -> str:
     session_token = request.cookies.get("session_token")
     if not session_token or session_token not in ACTIVE_SESSIONS:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    return ACTIVE_SESSIONS[session_token]
+        
+    session_data = ACTIVE_SESSIONS[session_token]
+    if isinstance(session_data, dict):
+        if time.time() > session_data.get("expires_at", float('inf')):
+            del ACTIVE_SESSIONS[session_token]
+            save_auth_sessions()
+            logger.info(f"Session token expired for user '{session_data.get('username')}'")
+            raise HTTPException(status_code=401, detail="Session expired")
+        return session_data.get("username", "")
+    elif isinstance(session_data, str):
+        # Legacy token string
+        return session_data
+        
+    raise HTTPException(status_code=401, detail="Not authenticated")
 
 # --- Background Task Helper & Active Chat State ---
 _active_tasks = set()
@@ -160,31 +208,64 @@ async def serve_index():
 @app.post("/api/auth/login")
 async def login(request: Request, response: Response, username: str = Form(...), password: str = Form(...)):
     client_ip = request.client.host if request.client else "unknown"
+    rate_key = f"{client_ip}:{username}"
+    current_time = time.time()
+    
+    # SEC-04: Rate Limiting (max 5 failed attempts within 60s window per IP/User)
+    _failed_login_attempts[rate_key] = [t for t in _failed_login_attempts[rate_key] if current_time - t < 60]
+    _failed_login_attempts[client_ip] = [t for t in _failed_login_attempts[client_ip] if current_time - t < 60]
+    
+    if len(_failed_login_attempts[rate_key]) >= 5 or len(_failed_login_attempts[client_ip]) >= 5:
+        logger.warning(f"Rate limit exceeded for login attempt (user: '{username}', IP: {client_ip})")
+        raise HTTPException(
+            status_code=429,
+            detail="Zu viele fehlgeschlagene Login-Versuche. Bitte warte eine Minute.",
+            headers={"Retry-After": "60"}
+        )
+
     users = get_valid_users()
     if username in users and users[username] == password:
+        _failed_login_attempts.pop(rate_key, None)
+        _failed_login_attempts.pop(client_ip, None)
+        
         session_token = uuid.uuid4().hex
-        ACTIVE_SESSIONS[session_token] = username
+        now = time.time()
+        max_age_seconds = 30 * 24 * 60 * 60 # 30 days
+        
+        # SEC-07: Store token with created_at and expires_at
+        ACTIVE_SESSIONS[session_token] = {
+            "username": username,
+            "created_at": now,
+            "expires_at": now + max_age_seconds
+        }
         save_auth_sessions()
         
+        cookie_secure = os.getenv("COOKIE_SECURE", "false").lower() in ("true", "1") or request.url.scheme == "https"
         response.set_cookie(
             key="session_token", 
             value=session_token, 
             httponly=True, 
             samesite="lax",
-            max_age=30 * 24 * 60 * 60 # 30 days
+            secure=cookie_secure,
+            max_age=max_age_seconds
         )
         # Ensure user directories exist
         init_user_storage(username)
         logger.info(f"User '{username}' logged in successfully from {client_ip}")
         return {"success": True}
+        
+    _failed_login_attempts[rate_key].append(current_time)
+    _failed_login_attempts[client_ip].append(current_time)
     logger.warning(f"Failed login attempt for user '{username}' from {client_ip}")
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 @app.post("/api/auth/logout")
 async def logout(request: Request, response: Response):
     session_token = request.cookies.get("session_token")
-    username = ACTIVE_SESSIONS.get(session_token, "unknown")
+    username = "unknown"
     if session_token in ACTIVE_SESSIONS:
+        entry = ACTIVE_SESSIONS[session_token]
+        username = entry.get("username", "") if isinstance(entry, dict) else str(entry)
         del ACTIVE_SESSIONS[session_token]
         save_auth_sessions()
         logger.info(f"User '{username}' logged out")
@@ -195,7 +276,16 @@ async def logout(request: Request, response: Response):
 async def auth_status(request: Request):
     session_token = request.cookies.get("session_token")
     if session_token and session_token in ACTIVE_SESSIONS:
-        return {"authenticated": True, "username": ACTIVE_SESSIONS[session_token]}
+        session_data = ACTIVE_SESSIONS[session_token]
+        if isinstance(session_data, dict):
+            if time.time() <= session_data.get("expires_at", float('inf')):
+                return {"authenticated": True, "username": session_data.get("username", "")}
+            else:
+                del ACTIVE_SESSIONS[session_token]
+                save_auth_sessions()
+                return {"authenticated": False}
+        elif isinstance(session_data, str):
+            return {"authenticated": True, "username": session_data}
     return {"authenticated": False}
 
 # Session Endpoints
@@ -240,7 +330,14 @@ async def get_history_endpoint(session_id: str, response: Response, username: st
 async def get_session_icon(session_id: str, username: str = Depends(get_current_user)):
     icon_path = get_session_icon_path(username, session_id)
     if icon_path and os.path.exists(icon_path):
-        return FileResponse(icon_path, media_type="image/svg+xml")
+        return FileResponse(
+            icon_path, 
+            media_type="image/svg+xml",
+            headers={
+                "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+                "X-Content-Type-Options": "nosniff"
+            }
+        )
     logger.warning(f"Icon not found for session {session_id} (user '{username}')")
     raise HTTPException(status_code=404, detail="Icon not found")
 
@@ -338,6 +435,11 @@ async def import_session_endpoint(session_id: str, file: UploadFile = File(...),
             logger.warning(f"Empty file uploaded for import in session {session_id} by user '{username}'")
             raise HTTPException(status_code=400, detail="Leere Datei hochgeladen")
             
+        MAX_ZIP_UPLOAD_SIZE = 500 * 1024 * 1024  # 500 MB
+        if len(zip_bytes) > MAX_ZIP_UPLOAD_SIZE:
+            logger.warning(f"Rejected import: archive exceeds 500 MB limit for session {session_id} (user '{username}')")
+            raise HTTPException(status_code=413, detail="ZIP-Archiv ist zu groß (maximal 500 MB erlaubt)")
+            
         result = await import_session_archive(username, session_id, zip_bytes)
         logger.info(f"User '{username}' imported session archive into session {session_id}")
         return {
@@ -426,12 +528,17 @@ async def chat_endpoint(
             user_uploads_dir = os.path.join(DATA_DIR, username, "sessions", session_id, "uploads")
             os.makedirs(user_uploads_dir, exist_ok=True)
             
+            MAX_FILE_SIZE = 25 * 1024 * 1024  # 25 MB per file
             for upload_file in valid_uploads:
                 orig_filename = os.path.basename(upload_file.filename) if upload_file.filename else "file"
                 safe_filename = re.sub(r'[^a-zA-Z0-9._-]', '_', orig_filename)
                 
                 contents = await upload_file.read()
                 file_size = len(contents)
+                if file_size > MAX_FILE_SIZE:
+                    _active_chat_sessions.discard(session_key)
+                    logger.warning(f"Rejected upload: '{orig_filename}' ({file_size} bytes) exceeds 25 MB limit for session {session_id} by '{username}'")
+                    return JSONResponse(status_code=413, content={"error": f"Datei '{orig_filename}' ist zu groß (maximal 25 MB erlaubt)"})
                 
                 ext = os.path.splitext(orig_filename)[1].lower()
                 is_image = False
@@ -691,21 +798,13 @@ async def download_file(username: str, session_id: str, file_path: str, current_
     if username != current_user:
         logger.warning(f"Forbidden data download attempt: user '{current_user}' attempted to access files of user '{username}', file: '{file_path}'")
         raise HTTPException(status_code=403, detail="Forbidden")
-    # --- Fallback for old history with scratch paths ---
-    if file_path.startswith("file:///root/.gemini/antigravity-cli/"):
-        real_path = file_path[len("file://"):]
-        if os.path.isfile(real_path):
-            return FileResponse(real_path, filename=os.path.basename(real_path))
-    elif file_path.startswith("/root/.gemini/antigravity-cli/"):
-        if os.path.isfile(file_path):
-            return FileResponse(file_path, filename=os.path.basename(file_path))
-    # --- End Fallback ---
             
     safe_session_id = os.path.basename(session_id)
     base_dir = os.path.abspath(os.path.join(DATA_DIR, username, "sessions", safe_session_id, "data"))
-    full_path = os.path.abspath(os.path.join(base_dir, file_path))
+    clean_file_path = os.path.normpath(file_path.lstrip("/\\"))
+    full_path = os.path.abspath(os.path.join(base_dir, clean_file_path))
     
-    if not full_path.startswith(base_dir):
+    if not (full_path.startswith(base_dir + os.sep) or full_path == base_dir) or os.path.commonpath([base_dir, full_path]) != base_dir:
         logger.warning(f"Potential path traversal attempt detected in data download: '{file_path}' for session {session_id} by user '{username}'")
         raise HTTPException(status_code=400, detail="Invalid path")
         

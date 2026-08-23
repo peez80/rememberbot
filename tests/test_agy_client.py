@@ -179,4 +179,4 @@ async def test_process_message_retry_failure(mock_create, mock_sleep, mock_remov
     assert "nach 5 erfolglosen Versuchen" in result["reply"]
     assert mock_create.call_count == 6
     assert mock_sleep.call_count == 5
-    mock_remove.assert_not_called()
+    mock_remove.assert_called_once()

@@ -36,7 +36,7 @@ async def test_create_session(mock_file, mock_datetime, mock_uuid, mock_exists):
     mock_file.assert_called_once()
     assert "testuser" in mock_file.call_args[0][0]
     assert "12345" in mock_file.call_args[0][0]
-    assert mock_file.call_args[0][0].endswith("session.json")
+    assert "session.json" in mock_file.call_args[0][0]
     
     handle = mock_file()
     written_data = "".join([call.args[0] for call in handle.write.call_args_list])

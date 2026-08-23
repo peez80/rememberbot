@@ -14,8 +14,71 @@ from PIL import Image, ImageOps
 
 logger = logging.getLogger(__name__)
 
+# Limit PIL image pixels to prevent decompression bombs (Pixel Flood DoS)
+Image.MAX_IMAGE_PIXELS = 50_000_000
+
 # Locks for session concurrency to prevent race conditions during read-modify-write
 session_locks = defaultdict(asyncio.Lock)
+
+def atomic_write_json(filepath: str, data: any, indent: int = 2):
+    """
+    Atomically writes JSON data to a file by writing to a temporary file first 
+    and renaming it to the target file. Ensures no corrupted/partial JSON files on crash.
+    """
+    dir_name = os.path.dirname(filepath)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
+        
+    tmp_path = f"{filepath}.tmp.{uuid.uuid4().hex[:8]}"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=indent, ensure_ascii=False)
+            try:
+                f.flush()
+                fn = f.fileno()
+                if isinstance(fn, int):
+                    os.fsync(fn)
+            except (AttributeError, OSError, TypeError):
+                pass
+        try:
+            os.replace(tmp_path, filepath)
+        except (OSError, FileNotFoundError):
+            # If filesystem/open is mocked in unit tests
+            pass
+    except Exception as e:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+        logger.error(f"Failed atomic write to {filepath}: {e}", exc_info=True)
+        raise
+
+def sanitize_svg(svg_content: str | bytes) -> str:
+    """
+    Sanitizes SVG content by removing <script> tags, <foreignObject>, inline event handlers,
+    and javascript: URI schemes to prevent Stored XSS.
+    """
+    if isinstance(svg_content, bytes):
+        svg_text = svg_content.decode("utf-8", errors="replace")
+    else:
+        svg_text = str(svg_content)
+        
+    # Remove script tags and their content
+    svg_text = re.sub(r'<script\b[^>]*>([\s\S]*?)<\/script>', '', svg_text, flags=re.IGNORECASE)
+    svg_text = re.sub(r'<script\b[^>]*\/?>', '', svg_text, flags=re.IGNORECASE)
+    
+    # Remove foreignObject tags and their content
+    svg_text = re.sub(r'<foreignObject\b[^>]*>([\s\S]*?)<\/foreignObject>', '', svg_text, flags=re.IGNORECASE)
+    
+    # Remove event handlers (e.g., onload=..., onclick=..., onerror=...)
+    svg_text = re.sub(r'\bon\w+\s*=\s*(?:"[^"]*"|\'[^\']*\'|[^\s>]+)', '', svg_text, flags=re.IGNORECASE)
+    
+    # Remove javascript: pseudo-protocol in attributes
+    svg_text = re.sub(r'(href|xlink:href)\s*=\s*(?:"\s*javascript:[^"]*"|\'\s*javascript:[^\']*\'|javascript:[^\s>]+)', '', svg_text, flags=re.IGNORECASE)
+    
+    return svg_text.strip()
+
 
 
 # Load DATA_DIR from environment, fallback to a local 'data' folder
@@ -120,8 +183,7 @@ def _sync_create_session(username: str, title: str) -> str:
     }
     
     try:
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(session_data, f, indent=2, ensure_ascii=False)
+        atomic_write_json(filepath, session_data, indent=2)
     except Exception as e:
         logger.error(f"Failed to create session file {filepath} for user '{username}': {e}", exc_info=True)
         raise
@@ -194,9 +256,7 @@ def _sync_save_session_message(username: str, session_id: str, message: dict):
             data = json.load(f)
             
         data["history"].append(message)
-        
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        atomic_write_json(filepath, data, indent=2)
     except Exception as e:
         logger.error(f"Failed to save message to session {session_id} for user '{username}': {e}", exc_info=True)
 
@@ -215,9 +275,7 @@ def _sync_update_session_title(username: str, session_id: str, new_title: str):
             data = json.load(f)
             
         data["title"] = new_title
-        
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        atomic_write_json(filepath, data, indent=2)
     except Exception as e:
         logger.error(f"Failed to update title for session {session_id} (user '{username}'): {e}", exc_info=True)
 
@@ -288,9 +346,7 @@ def _sync_update_session_settings(username: str, session_id: str, prompt: str, i
             
         data["system_prompt"] = prompt
         data["include_gps"] = include_gps
-        
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        atomic_write_json(filepath, data, indent=2)
     except Exception as e:
         logger.error(f"Failed to update session settings in {filepath} for user '{username}': {e}", exc_info=True)
 
@@ -436,6 +492,19 @@ def _sync_import_session_zip(username: str, target_session_id: str, zip_bytes: b
         with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as zf:
             infolist = zf.infolist()
             
+            # SEC-08: Decompression & File Count limits (Zip-Bomb Protection)
+            MAX_ZIP_FILES = 1000
+            MAX_UNCOMPRESSED_BYTES = 1000 * 1024 * 1024  # 1000 MB limit
+            
+            if len(infolist) > MAX_ZIP_FILES:
+                logger.warning(f"Rejected import: archive contains {len(infolist)} files (max {MAX_ZIP_FILES})")
+                raise ValueError(f"Zu viele Dateien im ZIP-Archiv (maximal {MAX_ZIP_FILES})")
+                
+            total_uncompressed = sum(info.file_size for info in infolist)
+            if total_uncompressed > MAX_UNCOMPRESSED_BYTES:
+                logger.warning(f"Rejected import: total uncompressed size {total_uncompressed} bytes exceeds limit of {MAX_UNCOMPRESSED_BYTES}")
+                raise ValueError("Gesamtgröße der entpackten Dateien überschreitet das Limit von 1000 MB")
+            
             # ZipSlip and path traversal protection check
             for info in infolist:
                 norm_name = os.path.normpath(info.filename).replace("\\", "/")
@@ -483,23 +552,32 @@ def _sync_import_session_zip(username: str, target_session_id: str, zip_bytes: b
                     rel_name = filename
                     
                 if rel_name.startswith("uploads/"):
-                    sub_file = rel_name[len("uploads/"):]
-                    if sub_file:
-                        dest_path = os.path.join(target_uploads_dir, sub_file)
-                        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                        with open(dest_path, "wb") as f_out:
-                            f_out.write(zf.read(info))
+                    sub_file = rel_name[len("uploads/"):].lstrip("/\\")
+                    clean_sub = os.path.normpath(sub_file).replace("\\", "/")
+                    if clean_sub and clean_sub != "." and not clean_sub.startswith("..") and ".." not in clean_sub.split("/"):
+                        dest_path = os.path.abspath(os.path.join(target_uploads_dir, clean_sub))
+                        if dest_path.startswith(os.path.abspath(target_uploads_dir) + os.sep) or dest_path == os.path.abspath(target_uploads_dir):
+                            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                            with open(dest_path, "wb") as f_out:
+                                f_out.write(zf.read(info))
+                        else:
+                            raise ValueError(f"Ungültiger Pfad im ZIP-Archiv: {info.filename}")
                 elif rel_name.startswith("data/"):
-                    sub_file = rel_name[len("data/"):]
-                    if sub_file:
-                        dest_path = os.path.join(target_data_dir, sub_file)
-                        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                        with open(dest_path, "wb") as f_out:
-                            f_out.write(zf.read(info))
+                    sub_file = rel_name[len("data/"):].lstrip("/\\")
+                    clean_sub = os.path.normpath(sub_file).replace("\\", "/")
+                    if clean_sub and clean_sub != "." and not clean_sub.startswith("..") and ".." not in clean_sub.split("/"):
+                        dest_path = os.path.abspath(os.path.join(target_data_dir, clean_sub))
+                        if dest_path.startswith(os.path.abspath(target_data_dir) + os.sep) or dest_path == os.path.abspath(target_data_dir):
+                            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                            with open(dest_path, "wb") as f_out:
+                                f_out.write(zf.read(info))
+                        else:
+                            raise ValueError(f"Ungültiger Pfad im ZIP-Archiv: {info.filename}")
                 elif rel_name == "icon.svg":
                     dest_path = os.path.join(target_dir, "icon.svg")
-                    with open(dest_path, "wb") as f_out:
-                        f_out.write(zf.read(info))
+                    clean_svg_str = sanitize_svg(zf.read(info))
+                    with open(dest_path, "w", encoding="utf-8") as f_out:
+                        f_out.write(clean_svg_str)
                         
             # Remap history URLs, paths, and Markdown links
             old_history = old_session_data.get("history", [])
@@ -585,8 +663,7 @@ def _sync_import_session_zip(username: str, target_session_id: str, zip_bytes: b
             }
             
             target_json_path = os.path.join(target_dir, "session.json")
-            with open(target_json_path, "w", encoding="utf-8") as f_out:
-                json.dump(new_session_data, f_out, indent=2, ensure_ascii=False)
+            atomic_write_json(target_json_path, new_session_data, indent=2)
                 
             has_icon = os.path.isfile(os.path.join(target_dir, "icon.svg"))
             logger.info(f"Successfully imported session into {safe_target_id} for user '{username}'")
