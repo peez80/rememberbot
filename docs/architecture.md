@@ -65,7 +65,7 @@ graph TD
 ## 2. Backend-Architektur
 
 ### 2.1 Core-Schicht (`app/core/`)
-- **[`config.py`](file:///apps/app/core/config.py)**: Zentralisierte Konfiguration und Konstanten (Dateigrößenlimits, Timeout-Werte, Security-Flags, Cookie-Attribute).
+- **[`config.py`](file:///apps/app/core/config.py)**: Zentralisierte Konfiguration und Konstanten (Dateigrößenlimits, Timeout-Werte wie `ICON_GENERATION_TIMEOUT_SECONDS` [Standard: 180s], Security-Flags, Cookie-Attribute).
 - **[`formatters.py`](file:///apps/app/core/formatters.py)**: Reine Transformations- und Formatierungsfunktionen (z. B. `<thought>`-Folding, Markdown-Pfad-Umschreibung, SVG-Sanitization).
 - **[`tasks.py`](file:///apps/app/core/tasks.py)**: `BackgroundSupervisor` für Task-Tracking, Session-Locking und Exception-Logging bei Hintergrundoperationen (`fire_and_forget`).
 

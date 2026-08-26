@@ -42,3 +42,30 @@ async def test_agy_service_generate_chat_icon(agy_service, tmp_path):
     with open(target_path, "r", encoding="utf-8") as f:
         content = f.read()
         assert "<svg" in content
+
+
+@pytest.mark.asyncio
+async def test_agy_service_generate_chat_icon_timeout_uses_configured_constant(agy_service, tmp_path, caplog):
+    import os
+    import logging
+    import asyncio
+    from app.core.config import ICON_GENERATION_TIMEOUT_SECONDS
+
+    target_path = str(tmp_path / "icon.svg")
+    mock_process = AsyncMock()
+    mock_process.communicate = AsyncMock(return_value=(b"", b""))
+    mock_process.kill = MagicMock()
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+        with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()) as mock_wait_for:
+            with caplog.at_level(logging.WARNING):
+                await agy_service.generate_chat_icon("Meeting Notes", target_path)
+
+            mock_wait_for.assert_called_once()
+            call_kwargs = mock_wait_for.call_args[1]
+            assert call_kwargs.get("timeout") == ICON_GENERATION_TIMEOUT_SECONDS
+            assert ICON_GENERATION_TIMEOUT_SECONDS == 180.0
+            assert mock_process.kill.called
+            assert os.path.exists(target_path)
+            assert f"timed out after {ICON_GENERATION_TIMEOUT_SECONDS}s" in caplog.text
+

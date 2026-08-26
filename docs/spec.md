@@ -75,5 +75,6 @@ Die Anwendung ist ein generischer, agentischer KI-Chat mit persistentem Gedächt
   - **Universelles Remapping:** Vollständiges und automatisches Umschreiben aller Session-IDs, Benutzernamen, lokaler Dateipfade (`files[i].path`) und Markdown-Verlinkungen (`/uploads/...`, `/app/data/...`) im Nachrichtentext auf die Ziel-Session und den Ziel-Benutzer.
   - **Kontextsensitive UI-Steuerung:** Im Einstellungs-Modal (`Chat-Einstellungen`) ist der Export-Button immer verfügbar, der Import-Button wird zur Vermeidung versehentlichen Datenverlusts ausschließlich bei neuen Chats mit leerem Verlauf angezeigt.
 - **agy Parameter:** Es werden Standardparameter (`--prompt`, `--output-format stream-json`, `--dangerously-skip-permissions`) verwendet. Der Aufruf ist in der Klasse `AgyClient` gekapselt.
+- **Avatar-/Icon-Generierung:** SVG-Icon-Erstellung (`generate_chat_icon`) mit zentral konfigurierbarem Timeout von 180 Sekunden (`ICON_GENERATION_TIMEOUT_SECONDS`) und automatischem Fallback.
 
 

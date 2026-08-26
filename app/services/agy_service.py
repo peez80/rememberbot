@@ -8,6 +8,7 @@ import logging
 import subprocess
 from typing import List, Dict, Any, Optional, Tuple, AsyncGenerator
 
+from app.core.config import ICON_GENERATION_TIMEOUT_SECONDS
 from app.core.formatters import format_thought_blocks, sanitize_svg
 
 logger = logging.getLogger(__name__)
@@ -411,11 +412,11 @@ class AGYService:
                 stderr=asyncio.subprocess.PIPE
             )
             try:
-                stdout_bytes, _ = await asyncio.wait_for(process.communicate(), timeout=5.0)
+                stdout_bytes, _ = await asyncio.wait_for(process.communicate(), timeout=ICON_GENERATION_TIMEOUT_SECONDS)
             except asyncio.TimeoutError:
                 process.kill()
                 stdout_bytes, _ = await process.communicate()
-                logger.warning("agy icon generation timed out after 5s, using fallback.")
+                logger.warning(f"agy icon generation timed out after {ICON_GENERATION_TIMEOUT_SECONDS}s, using fallback.")
                 write_fallback()
                 return
 

@@ -89,6 +89,12 @@ async def test_get_session_icon_endpoint_404_and_200(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_config_icon_generation_timeout_default():
+    from app.core.config import ICON_GENERATION_TIMEOUT_SECONDS
+    assert ICON_GENERATION_TIMEOUT_SECONDS == 180.0
+
+
+@pytest.mark.asyncio
 async def test_generate_chat_icon_fallback(tmp_path):
     output_path = str(tmp_path / "icon.svg")
     await agy_client.generate_chat_icon("Kochen Rezept", output_path)
@@ -96,3 +102,50 @@ async def test_generate_chat_icon_fallback(tmp_path):
     with open(output_path, "r", encoding="utf-8") as f:
         content = f.read()
     assert "<svg" in content
+
+
+@pytest.mark.asyncio
+async def test_generate_chat_icon_timeout_uses_configured_constant(tmp_path, caplog):
+    import os
+    import logging
+    import asyncio
+    from unittest.mock import AsyncMock
+    from app.core.config import ICON_GENERATION_TIMEOUT_SECONDS
+
+    output_path = str(tmp_path / "icon.svg")
+    mock_process = AsyncMock()
+    mock_process.communicate = AsyncMock(return_value=(b"", b""))
+    mock_process.kill = MagicMock()
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+        with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()) as mock_wait_for:
+            with caplog.at_level(logging.WARNING):
+                await agy_client.generate_chat_icon("Meeting Notes", output_path)
+
+            mock_wait_for.assert_called_once()
+            call_kwargs = mock_wait_for.call_args[1]
+            assert call_kwargs.get("timeout") == ICON_GENERATION_TIMEOUT_SECONDS
+            assert ICON_GENERATION_TIMEOUT_SECONDS == 180.0
+            assert mock_process.kill.called
+            assert os.path.exists(output_path)
+            assert f"timed out after {ICON_GENERATION_TIMEOUT_SECONDS}s" in caplog.text
+
+
+
+@pytest.mark.asyncio
+async def test_generate_chat_icon_success(tmp_path):
+    from unittest.mock import AsyncMock
+
+    output_path = str(tmp_path / "icon.svg")
+    mock_process = AsyncMock()
+    mock_process.communicate.return_value = (b'<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>', b"")
+    mock_process.returncode = 0
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+        await agy_client.generate_chat_icon("Meeting Notes", output_path)
+
+    assert os.path.exists(output_path)
+    with open(output_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    assert "<rect" in content
+
