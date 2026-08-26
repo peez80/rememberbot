@@ -243,3 +243,68 @@ def test_upload_logging(mock_get_settings, mock_update_title, mock_exists, mock_
     log_messages = [record.message for record in caplog.records]
     assert any("sess-log-123" in msg or "testuser" in msg or "file" in msg.lower() for msg in log_messages)
 
+
+@patch("app.main.agy_client")
+@patch("app.main.get_session_history")
+@patch("app.main.save_session_message")
+@patch("app.main.get_session_title")
+@patch("app.main.check_session_exists")
+@patch("app.main.update_session_title")
+@patch("app.main.get_session_settings")
+def test_single_image_upload_not_duplicated(mock_get_settings, mock_update_title, mock_exists, mock_title, mock_save_msg, mock_get_history, mock_agy_client, tmp_path):
+    mock_get_history.return_value = []
+    mock_get_settings.return_value = {"prompt": "", "include_gps": False}
+    mock_exists.return_value = True
+    mock_title.return_value = "Neuer Chat"
+    
+    async def mock_process(*args, **kwargs):
+        return {"reply": "Bild analysiert.", "context_truncated": False}
+    mock_agy_client.process_message.side_effect = mock_process
+    
+    async def mock_generate_icon(*args, **kwargs):
+        pass
+    mock_agy_client.generate_chat_icon.side_effect = mock_generate_icon
+
+    png_bytes = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=")
+    files = [("files", ("single_photo.png", png_bytes, "image/png"))]
+    data = {"message": "Schau dir dieses Foto an"}
+
+    with patch("app.main.DATA_DIR", str(tmp_path)):
+        response = client.post("/api/sessions/sess-single-img-123/chat", data=data, files=files)
+        assert response.status_code == 200
+
+        # Verify user message saved
+        assert mock_save_msg.call_count == 2
+        user_msg_call = mock_save_msg.call_args_list[0][0][2]
+
+        assert user_msg_call["text"] == "Schau dir dieses Foto an [1 Bild(er) angehängt]"
+        assert user_msg_call["is_user"] is True
+        assert "images" in user_msg_call
+        assert len(user_msg_call["images"]) == 1
+        assert "files" in user_msg_call
+        assert len(user_msg_call["files"]) == 1
+
+        # Verify exactly 1 file was saved on disk in uploads directory
+        uploads_dir = tmp_path / "testuser" / "sessions" / "sess-single-img-123" / "uploads"
+        saved_files = list(uploads_dir.iterdir())
+        assert len(saved_files) == 1
+        assert saved_files[0].read_bytes() == png_bytes
+
+        # Verify agy_client received exactly 1 image path
+        call_kwargs = mock_agy_client.process_message.call_args.kwargs
+        assert len(call_kwargs["image_paths"]) == 1
+        assert len(call_kwargs["attachments"]) == 1
+
+
+def test_frontend_main_js_no_duplicate_image_append():
+    main_js_path = os.path.join(os.path.dirname(__file__), "..", "app", "static", "js", "main.js")
+    with open(main_js_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    # Ensure main.js does NOT append to both 'files' and 'images' in chatForm submit handler
+    assert 'formData.append("images", file)' not in content, (
+        "Found duplicate image append 'formData.append(\"images\", file)' in main.js. "
+        "All files should only be appended once to 'files'."
+    )
+
+

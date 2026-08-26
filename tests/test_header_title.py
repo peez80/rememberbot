@@ -23,8 +23,10 @@ def test_styles_contains_header_title_and_icon_css():
 
 
 def test_app_js_contains_header_title_and_icon_logic():
-    """Verify that app.js contains logic for updating header title and icon."""
-    response = client.get("/static/app.js")
+    """Verify that frontend modules contain logic for updating header title and icon."""
+    response = client.get("/static/js/main.js")
+    if response.status_code == 404:
+        response = client.get("/static/app.js")
     assert response.status_code == 200
     assert 'header-chat-title' in response.text
     assert 'header-chat-icon' in response.text

@@ -70,12 +70,16 @@ Example `users.json`:
 > **Security Note:** Passwords are currently stored in plain text. This authentication mechanism is intended for local or personal use only. Do not use this in a public-facing or production environment without adding proper password hashing.
 
 ## Architecture
-- `app/main.py`: The FastAPI application entry point, handling routing, thumbnail generation endpoints, Server-Sent Events (SSE) streaming, and HTTP requests.
-- `app/logging_config.py`: Centralized standard logging configuration with support for human-readable console formatting and structured JSON logging.
-- `app/agy_client.py`: The client wrapper for interacting with the `antigravity-cli` via asynchronous subprocesses (NDJSON streaming via `stream-json`).
-- `app/storage.py`: Handles saving the structured parsed data locally, session metadata, thumbnail creation, and file storage.
-- `app/static/`: Contains the frontend assets (`index.html`, `app.js`, `styles.css`) for progressive stream rendering, infinite scroll history loading, and responsive UI.
-- `docker-compose.yml`: Defines the services and volume mappings for the Docker environment.
+
+RememberBot follows a clean, modular multi-tier architecture. See [`docs/architecture.md`](docs/architecture.md) for the complete architectural blueprint and diagrams.
+
+- **`app/core/`**: Configuration, task supervision (`BackgroundSupervisor`), and formatting utilities.
+- **`app/models/`**: Strongly typed Pydantic domain models for auth, sessions, and chat.
+- **`app/services/`**: Decoupled service layer (`auth_service`, `storage_service`, `session_service`, `agy_service`, `chat_service`).
+- **`app/routers/`**: Dedicated FastAPI APIRouters (`auth`, `sessions`, `files`, `chat`).
+- **`app/main.py`**: Lean application entry point and middleware configuration.
+- **`app/static/js/`**: Modular Vanilla ES6 frontend (`state`, `api`, `components`, `utils`).
+- **`app/logging_config.py`**: Centralized structured logging.
 
 ## Configuration & Logging
 

@@ -6,16 +6,42 @@ import uuid
 import asyncio
 import logging
 import subprocess
-from typing import List, Dict, Any, Optional, AsyncGenerator
+from typing import List, Dict, Any, Optional, Tuple, AsyncGenerator
 
 from app.core.formatters import format_thought_blocks, sanitize_svg
 
 logger = logging.getLogger(__name__)
 
-class AgyClient:
+class AGYService:
     def __init__(self, executable_path: str = "agy"):
         self.executable_path = executable_path
         self._login_process = None
+
+    def estimate_tokens(self, text: str) -> int:
+        """Rough estimation: ~4 characters per token for latin/code text."""
+        if not text:
+            return 0
+        return max(1, len(text) // 4)
+
+    def prune_history_to_token_budget(self, messages: List[Dict[str, Any]], max_tokens: int = 24000) -> Tuple[List[Dict[str, Any]], bool]:
+        """Prunes older messages from history if the token budget is exceeded."""
+        if not messages:
+            return [], False
+
+        total_tokens = 0
+        pruned_reversed = []
+        was_truncated = False
+
+        for msg in reversed(messages):
+            msg_text = msg.get("text", "")
+            msg_tokens = self.estimate_tokens(msg_text)
+            if total_tokens + msg_tokens <= max_tokens:
+                pruned_reversed.append(msg)
+                total_tokens += msg_tokens
+            else:
+                was_truncated = True
+
+        return list(reversed(pruned_reversed)), was_truncated
 
     def is_authenticated(self) -> bool:
         cred_dir = os.path.expanduser("~/.gemini/antigravity-cli")
@@ -96,7 +122,7 @@ class AgyClient:
         attachments: list = None,
         system_prompt: str = None,
         cwd: str = None
-    ):
+    ) -> Tuple[str, Optional[str]]:
         prompt = ""
         if system_prompt:
             prompt += f"<system_instructions>\n{system_prompt}\n</system_instructions>\n\n"
@@ -417,4 +443,4 @@ class AgyClient:
 
 
 # Global instance
-agy_client = AgyClient()
+agy_service = AGYService()

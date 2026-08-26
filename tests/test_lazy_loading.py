@@ -6,8 +6,10 @@ client = TestClient(app)
 
 
 def test_app_js_contains_lazy_loading_attributes():
-    """Verify that app.js sets loading='lazy' and decoding='async' on chat images."""
-    response = client.get("/static/app.js")
+    """Verify that frontend modules set loading='lazy' and decoding='async' on chat images."""
+    response = client.get("/static/js/components/chat_view.js")
+    if response.status_code == 404:
+        response = client.get("/static/app.js")
     assert response.status_code == 200
     assert 'loading = "lazy"' in response.text or "loading = 'lazy'" in response.text or 'loading = "lazy"' in response.text
     assert 'decoding = "async"' in response.text or "decoding = 'async'" in response.text or 'decoding = "async"' in response.text

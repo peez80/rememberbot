@@ -6,8 +6,10 @@ client = TestClient(app)
 
 
 def test_app_js_contains_progressive_rendering_logic():
-    """Verify that app.js implements progressive rendering (batch size, scroll handling, thumbnail links)."""
-    response = client.get("/static/app.js")
+    """Verify that frontend modules implement progressive rendering (batch size, scroll handling, thumbnail links)."""
+    response = client.get("/static/js/components/chat_view.js")
+    if response.status_code == 404:
+        response = client.get("/static/app.js")
     assert response.status_code == 200
     text = response.text
     
