@@ -6,14 +6,14 @@ logger = logging.getLogger(__name__)
 
 def format_thought_blocks(text: str, is_streaming: bool = False) -> str:
     """
-    Convert <thought>...</thought> blocks into collapsible <details> HTML elements.
+    Convert <thinking>...</thinking> (and legacy <thought>) blocks into collapsible <details> HTML elements.
     Supports unclosed streaming thought tags gracefully.
     """
     if not text:
         return ""
 
     def replace_closed_thought(match):
-        content = match.group(1).strip()
+        content = match.group(2).strip()
         return (
             "<details class='ai-reasoning'>\n"
             "  <summary>Gedankengang der KI</summary>\n"
@@ -23,11 +23,18 @@ def format_thought_blocks(text: str, is_streaming: bool = False) -> str:
             "</details>\n"
         )
 
-    formatted = re.sub(r'<thought>(.*?)</thought>', replace_closed_thought, text, flags=re.DOTALL)
+    # Match closed tags with backreference \1 to enforce matching opening and closing tag names
+    formatted = re.sub(
+        r'<(thought|thinking|gedanken)>(.*?)</\1>',
+        replace_closed_thought,
+        text,
+        flags=re.DOTALL | re.IGNORECASE
+    )
 
-    if is_streaming and '<thought>' in formatted and '</thought>' not in formatted:
+    # If streaming and an open tag exists without its matching closing tag
+    if is_streaming and re.search(r'<(thought|thinking|gedanken)>', formatted, flags=re.IGNORECASE):
         def replace_open_thought(match):
-            content = match.group(1).strip()
+            content = match.group(2).strip()
             return (
                 "<details class='ai-reasoning' open>\n"
                 "  <summary>Gedankengang der KI...</summary>\n"
@@ -36,7 +43,12 @@ def format_thought_blocks(text: str, is_streaming: bool = False) -> str:
                 "  </div>\n"
                 "</details>\n"
             )
-        formatted = re.sub(r'<thought>(.*)$', replace_open_thought, formatted, flags=re.DOTALL)
+        formatted = re.sub(
+            r'<(thought|thinking|gedanken)>(.*)$',
+            replace_open_thought,
+            formatted,
+            flags=re.DOTALL | re.IGNORECASE
+        )
 
     return formatted.strip()
 

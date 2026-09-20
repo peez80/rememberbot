@@ -4,13 +4,13 @@
 
 export const formatThoughtBlocks = (rawText, isStreaming = false) => {
     let formatted = rawText || "";
-    // Closed thought blocks
-    formatted = formatted.replace(/<thought>([\s\S]*?)<\/thought>/g, (match, content) => {
+    // Closed thought/thinking blocks with backreference \1 to ensure matching tags
+    formatted = formatted.replace(/<(thought|thinking|gedanken)>([\s\S]*?)<\/\1>/gi, (match, tag, content) => {
         return `<details class='ai-reasoning'><summary>Gedankengang der KI</summary><div class='reasoning-content'>\n${content.trim()}\n</div></details>\n`;
     });
-    // Open unclosed thought block while streaming
-    if (isStreaming && formatted.includes('<thought>')) {
-        formatted = formatted.replace(/<thought>([\s\S]*)$/g, (match, content) => {
+    // Open unclosed thought/thinking block while streaming
+    if (isStreaming && /<(thought|thinking|gedanken)>/i.test(formatted)) {
+        formatted = formatted.replace(/<(thought|thinking|gedanken)>([\s\S]*)$/gi, (match, tag, content) => {
             return `<details class='ai-reasoning' open><summary>Gedankengang der KI...</summary><div class='reasoning-content'>\n${content.trim()}\n</div></details>\n`;
         });
     }

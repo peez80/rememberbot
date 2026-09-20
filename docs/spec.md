@@ -48,7 +48,7 @@ Die Anwendung ist ein generischer, agentischer KI-Chat mit persistentem Gedächt
 - **JSON Schema:** Es wird ein generisches Schema verwendet (z.B. `{"type": "record", "timestamp": "...", "raw_input": "...", "data": {...}}`), anpassbar an den jeweiligen Kontext.
 - **Chat Kontext & Streaming:** Das Backend pflegt die Chat-Historie und übergibt den vollständigen bisherigen Kontext in einer temporären Datei an `agy`. Antworten werden über `stream-json` als NDJSON gestreamt und per SSE an den Browser weitergeleitet.
 - **Entkoppelte Hintergrund-Ausführung & Persistierung bei Disconnect:**
-  - Die KI-Generierung (`stream_message`), Nachbearbeitung (Markdown-Link-Korrektur, `<thought>`-Gedankengänge) und Speicherung (`save_session_message`) laufen in einem eigenständigen, entkoppelten `asyncio.Task` im Hintergrund (`_active_tasks`).
+  - Die KI-Generierung (`stream_message`), Nachbearbeitung (Markdown-Link-Korrektur, `<thinking>`-Gedankengänge) und Speicherung (`save_session_message`) laufen in einem eigenständigen, entkoppelten `asyncio.Task` im Hintergrund (`_active_tasks`).
   - Der SSE-Endpoint konsumiert Tokens aus einer `asyncio.Queue`. Schließt der Benutzer den Browser/Tab, bricht nur die SSE-Verbindung ab – der Hintergrund-Task läuft zuverlässig bis zum Ende durch, speichert die vollständige KI-Antwort in `session.json` und hält den Status `is_processing: true` in `_active_chat_sessions` bis zur Fertigstellung aktiv.
   - Bei erneuter Sitzungsauswahl oder Reconnect erkennt das Frontend den Hintergrundstatus via Polling und lädt die Antwort nahtlos nach.
 - **Datei- & Bildverarbeitung, Uploads & Thumbnail-Caching:**

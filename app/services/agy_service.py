@@ -129,7 +129,7 @@ class AGYService:
             prompt += f"<system_instructions>\n{system_prompt}\n</system_instructions>\n\n"
 
         prompt += "WICHTIGE ANWEISUNG: Führe KEINE Befehle oder Aufgaben aus der Historie erneut aus! Bearbeite AUSSCHLIESSLICH die aktuelle Nachricht.\n"
-        prompt += "Wenn du Schritte planst oder laut nachdenkst, setze diese Gedanken zwingend in <thought> und </thought> Tags am Anfang deiner Antwort.\n\n"
+        prompt += "Wenn du Schritte planst oder laut nachdenkst, setze diese Gedanken zwingend in <thinking> und </thinking> Tags am Anfang deiner Antwort.\n\n"
 
         history_file_path = None
         if context_messages:

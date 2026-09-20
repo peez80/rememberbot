@@ -283,6 +283,7 @@ body {
 }
 
 .ai-message.streaming .markdown-body > :last-child::after,
+.ai-message.streaming .reasoning-content:not(:has(*))::after,
 .ai-message.streaming .reasoning-content > :last-child::after {
     content: ' ▌';
     display: inline-block;
