@@ -6,6 +6,7 @@ class SessionMetadata(BaseModel):
     title: str = "Neuer Chat"
     created_at: Optional[str] = None
     has_icon: bool = False
+    agy_conversation_id: Optional[str] = None
 
 class SessionSettingsRequest(BaseModel):
     prompt: str = ""

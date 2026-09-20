@@ -66,3 +66,23 @@ async def test_session_export_and_import(session_service):
     assert len(bob_history) == 1
     assert f"/uploads/{target_id}/photo.png" in bob_history[0]["text"]
     assert bob_history[0]["image_urls"] == [f"/uploads/{target_id}/photo.png"]
+
+@pytest.mark.asyncio
+async def test_session_conversation_id_storage(session_service):
+    session_id = await session_service.create_session("alice", "Conv ID Chat")
+    
+    # Initially None
+    conv_id = await session_service.get_session_conversation_id("alice", session_id)
+    assert conv_id is None
+    
+    # Update conversation ID
+    await session_service.set_session_conversation_id("alice", session_id, "test-conv-uuid-1234")
+    
+    # Read back
+    updated_id = await session_service.get_session_conversation_id("alice", session_id)
+    assert updated_id == "test-conv-uuid-1234"
+    
+    # Clear conversation ID
+    await session_service.set_session_conversation_id("alice", session_id, None)
+    assert await session_service.get_session_conversation_id("alice", session_id) is None
+

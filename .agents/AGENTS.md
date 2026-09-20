@@ -26,12 +26,16 @@ Diese Datei enthält projektspezifische Verhaltensregeln und Standard-Anweisunge
 - **DOM-Schutz bei aktiven Submits:** `selectSession()`, Hintergrund-Polling oder `visibilitychange` dürfen den Chat-Container niemals leeren (`innerHTML = ''`), während eine Nachricht aktiv gesendet/gestreamt wird (`activeSubmittingSessionId`).
 - **Streaming-Verarbeitung:** Verwende für SSE-Streams die `ReadableStream`-API (`response.body.getReader()`) und formatiere `<thought>`-Gedankengänge progressiv als einklappbare `<details class="ai-reasoning">`-Elemente.
 
-## 3. Testing
+## 3. Testing & Planungsmethodik
 - Verfolge bei allen Code-Änderungen strikt den **Test-Driven Development (TDD)** Ansatz (Red, Green, Refactor):
   1. **Red:** Schreibe oder aktualisiere zuerst die Tests, bevor du Implementierungsänderungen vornimmst. Führe die Tests aus und stelle sicher, dass sie fehlschlagen.
   2. **Green:** Implementiere den minimale Code-Menge, um die Tests erfolgreich passieren zu lassen. Führe die Tests erneut aus.
   3. **Refactor:** Räume den Code bei Bedarf auf, während alle Tests weiterhin grün bleiben.
-- **Planungsvorgabe:** Wenn du mit dem `/plan` Befehl einen Implementierungsplan erstellst, strukturiere den Plan (insbesondere die "Proposed Changes") **immer explizit** in die drei TDD-Phasen (Phase 1: Red, Phase 2: Green, Phase 3: Refactor).
+- **Planungsvorgaben (`/plan`):**
+  - Strukturiere den Plan (insbesondere die "Proposed Changes") **immer explizit** in die drei TDD-Phasen (Phase 1: Red, Phase 2: Green, Phase 3: Refactor).
+  - **Lösungsraum & Trade-Offs vorab abstimmen:** Bei architektonischen oder Performance-relevanten Weichenstellungen nicht vorschnell einen einzigen Pfad festlegen, sondern vorab 2–3 Alternativen mit ihren Trade-Offs (z. B. Latenz, Token-Overhead, Dateisystem-I/O vs. CLI-Flags) gegenüberstellen und mit dem Nutzer abstimmen.
+  - **Historischen Kontext & Altdaten hinterfragen:** Vor früheren Architekturentscheidungen innehalten (z. B. warum eine Datei statt CLI-Prompt genutzt wurde -> Vermeidung von `ARG_MAX`-Limits). Systematisch prüfen: Was passiert mit bereits existierenden Sessions, importierten ZIP-Dateien oder leeren Anfangszuständen? Keine voreiligen Vereinfachungen (wie Abschneiden/Truncation), wenn voller Kontext benötigt wird.
+  - **Mentale Simulation (Schrittweiser Walkthrough):** Vor der finalen Genehmigung des Plans den Datenfluss und Lifecycle für alle konkreten Szenarien gedanklich Schritt für Schritt durchspielen (z. B. Turn 1 neue Session, Turn 2+ neue Session, bestehende Session Turn 1 Seeding, bestehende Session Turn 2+, Fallback bei gelöschtem State). Erst wenn alle Pfade gedanklich fehlerfrei aufgehen, den Plan zur Freigabe vorlegen.
 - Wenn neuer Code geschrieben wird, erstelle oder erweitere immer direkt die passenden Unit-Tests im `tests/` Ordner.
 - **Logging-Verifikation:** Teste Fehlerbehandlungs-Routen und Ausnahme-Pfade mit dem Pytest-Fixture `caplog`, um sicherzustellen, dass die definierten Log-Einträge im Fehlerfall zuverlässig generiert werden.
 - Test-Framework ist `pytest`.

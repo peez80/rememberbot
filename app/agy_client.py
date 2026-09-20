@@ -33,6 +33,13 @@ class AgyClient:
         except Exception:
             return False
 
+    def conversation_exists(self, conv_id: Optional[str]) -> bool:
+        if not conv_id:
+            return False
+        path = os.path.expanduser(f"~/.gemini/antigravity-cli/conversations/{conv_id}.db")
+        return os.path.isfile(path)
+
+
     def get_login_url(self) -> str:
         try:
             if self._login_process:
@@ -96,7 +103,8 @@ class AgyClient:
         image_paths: list = None,
         attachments: list = None,
         system_prompt: str = None,
-        cwd: str = None
+        cwd: str = None,
+        conversation_id: str = None
     ):
         prompt = ""
         if system_prompt:
@@ -106,7 +114,7 @@ class AgyClient:
         prompt += "Wenn du Schritte planst oder laut nachdenkst, setze diese Gedanken zwingend in <thinking> und </thinking> Tags am Anfang deiner Antwort.\n\n"
 
         history_file_path = None
-        if context_messages:
+        if context_messages and not conversation_id:
             t_write_start = time.perf_counter()
             filename = f"chat_context_{uuid.uuid4().hex[:8]}.txt"
             history_file_path = os.path.join(cwd if cwd else "/tmp", filename)
@@ -123,7 +131,7 @@ class AgyClient:
 
                 t_write_end = time.perf_counter()
                 file_size = os.path.getsize(history_file_path)
-                logger.info(f"Schreiben der Kontextdatei ({file_size} Bytes) dauerte: {t_write_end - t_write_start:.4f}s")
+                logger.info(f"[CONVERSATION SEEDING] Wrote full history context file '{history_file_path}' ({file_size} Bytes) in {t_write_end - t_write_start:.4f}s")
                 prompt += f"Lies zwingend die Datei {history_file_path} für den bisherigen Chat-Verlauf!\n\n"
             except Exception as e:
                 logger.error(f"Failed to write chat context file {history_file_path}: {e}", exc_info=True)
@@ -166,13 +174,17 @@ class AgyClient:
         image_paths: list = None,
         attachments: list = None,
         system_prompt: str = None,
-        cwd: str = None
+        cwd: str = None,
+        conversation_id: str = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         prompt, history_file_path = self._build_prompt_and_history(
-            context_messages, new_message, image_paths, attachments, system_prompt, cwd
+            context_messages, new_message, image_paths, attachments, system_prompt, cwd, conversation_id
         )
 
-        cmd = [self.executable_path, "--dangerously-skip-permissions", "--output-format", "stream-json", "--prompt", prompt]
+        cmd = [self.executable_path, "--dangerously-skip-permissions", "--output-format", "stream-json"]
+        if conversation_id:
+            cmd.extend(["--conversation", conversation_id])
+        cmd.extend(["--prompt", prompt])
 
         log_cmd = cmd.copy()
         if "--prompt" in log_cmd:
@@ -204,7 +216,11 @@ class AgyClient:
                 try:
                     event_data = json.loads(line_str)
                     event_name = event_data.get("event")
-                    if event_name == "step_update":
+                    if event_name == "init":
+                        conv_id = event_data.get("conversation_id")
+                        if conv_id:
+                            yield {"type": "init", "conversation_id": conv_id}
+                    elif event_name == "step_update":
                         su = event_data.get("step_update", {})
                         delta = su.get("text_delta")
                         if delta:
@@ -272,14 +288,18 @@ class AgyClient:
         image_paths: list = None,
         attachments: list = None,
         system_prompt: str = None,
-        cwd: str = None
+        cwd: str = None,
+        conversation_id: str = None
     ) -> dict:
         context_truncated = False
         prompt, history_file_path = self._build_prompt_and_history(
-            context_messages, new_message, image_paths, attachments, system_prompt, cwd
+            context_messages, new_message, image_paths, attachments, system_prompt, cwd, conversation_id
         )
 
-        cmd = [self.executable_path, "--dangerously-skip-permissions", "--prompt", prompt]
+        cmd = [self.executable_path, "--dangerously-skip-permissions"]
+        if conversation_id:
+            cmd.extend(["--conversation", conversation_id])
+        cmd.extend(["--prompt", prompt])
 
         log_cmd = cmd.copy()
         if "--prompt" in log_cmd:

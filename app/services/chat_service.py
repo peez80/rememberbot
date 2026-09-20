@@ -183,13 +183,31 @@ class ChatService:
         os.makedirs(cwd, exist_ok=True)
 
         client_obj = self._get_agy_client()
+        stored_conv_id = await self.session_service.get_session_conversation_id(username, session_id)
+        has_conv_exists = hasattr(client_obj, "conversation_exists")
+
+        if stored_conv_id:
+            if not has_conv_exists or client_obj.conversation_exists(stored_conv_id):
+                logger.info("[CONVERSATION RESUMING] Resuming agy conversation '%s' for session %s (user '%s').", stored_conv_id, session_id, username)
+                conversation_id = stored_conv_id
+            else:
+                logger.warning("[CONVERSATION FALLBACK] Stored agy conversation '%s' not found locally for session %s (user '%s'). Triggering re-seeding with full history (%d messages).", stored_conv_id, session_id, username, len(history))
+                conversation_id = None
+        elif history:
+            logger.info("[CONVERSATION SEEDING] Initiating one-time history seeding for session %s (%d messages) for user '%s'.", session_id, len(history), username)
+            conversation_id = None
+        else:
+            logger.info("Starting brand new agy conversation for session %s (user '%s').", session_id, username)
+            conversation_id = None
+
         result = await client_obj.process_message(
             context_messages=history,
             new_message=message,
             image_paths=image_paths,
             attachments=attachments,
             system_prompt=system_prompt,
-            cwd=cwd
+            cwd=cwd,
+            conversation_id=conversation_id
         )
 
         ai_reply = format_local_links(result.get("reply", ""), username, session_id)
@@ -325,10 +343,27 @@ class ChatService:
 
         queue = asyncio.Queue()
         client_obj = self._get_agy_client()
+        stored_conv_id = await self.session_service.get_session_conversation_id(username, session_id)
+        has_conv_exists = hasattr(client_obj, "conversation_exists")
+
+        if stored_conv_id:
+            if not has_conv_exists or client_obj.conversation_exists(stored_conv_id):
+                logger.info("[CONVERSATION RESUMING] Resuming agy conversation '%s' for session %s (user '%s').", stored_conv_id, session_id, username)
+                conversation_id = stored_conv_id
+            else:
+                logger.warning("[CONVERSATION FALLBACK] Stored agy conversation '%s' not found locally for session %s (user '%s'). Triggering re-seeding with full history (%d messages).", stored_conv_id, session_id, username, len(history))
+                conversation_id = None
+        elif history:
+            logger.info("[CONVERSATION SEEDING] Initiating one-time history seeding for session %s (%d messages) for user '%s'.", session_id, len(history), username)
+            conversation_id = None
+        else:
+            logger.info("Starting brand new agy conversation for session %s (user '%s').", session_id, username)
+            conversation_id = None
 
         async def background_stream_consumer():
             full_raw_reply = ""
             done_saved = False
+            current_conv_id = conversation_id
             try:
                 async for event in client_obj.stream_message(
                     context_messages=history,
@@ -336,10 +371,18 @@ class ChatService:
                     image_paths=image_paths,
                     attachments=attachments,
                     system_prompt=system_prompt,
-                    cwd=cwd
+                    cwd=cwd,
+                    conversation_id=conversation_id
                 ):
                     event_type = event.get("type")
-                    if event_type == "delta":
+                    if event_type == "init":
+                        new_conv_id = event.get("conversation_id")
+                        if new_conv_id and new_conv_id != current_conv_id:
+                            current_conv_id = new_conv_id
+                            prefix = "[CONVERSATION SEEDING] Captured new agy conversation" if not stored_conv_id else "Captured updated agy conversation"
+                            logger.info("%s '%s' for session %s (user '%s'). Persisting to session storage.", prefix, new_conv_id, session_id, username)
+                            await self.session_service.set_session_conversation_id(username, session_id, new_conv_id)
+                    elif event_type == "delta":
                         text_chunk = event.get("text", "")
                         full_raw_reply += text_chunk
                         await queue.put({"type": "delta", "text": text_chunk})

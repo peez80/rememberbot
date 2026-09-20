@@ -39,7 +39,8 @@ class SessionService:
             "created_at": datetime.now(timezone.utc).isoformat(),
             "history": [],
             "system_prompt": "",
-            "include_gps": False
+            "include_gps": False,
+            "agy_conversation_id": None
         }
 
         try:
@@ -157,6 +158,40 @@ class SessionService:
     async def get_session_title(self, username: str, session_id: str) -> str:
         async with self.storage.session_locks[session_id]:
             return await asyncio.to_thread(self._sync_get_session_title, username, session_id)
+
+    def _sync_get_session_conversation_id(self, username: str, session_id: str) -> Optional[str]:
+        filepath = self.storage.get_session_filepath(username, session_id)
+        if not os.path.exists(filepath):
+            return None
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get("agy_conversation_id")
+        except Exception as e:
+            logger.error(f"Failed to read agy_conversation_id from {filepath} for user '{username}': {e}", exc_info=True)
+            return None
+
+    async def get_session_conversation_id(self, username: str, session_id: str) -> Optional[str]:
+        async with self.storage.session_locks[session_id]:
+            return await asyncio.to_thread(self._sync_get_session_conversation_id, username, session_id)
+
+    def _sync_set_session_conversation_id(self, username: str, session_id: str, conv_id: Optional[str]):
+        filepath = self.storage.get_session_filepath(username, session_id)
+        if not os.path.exists(filepath):
+            logger.warning(f"Cannot set conversation_id: session file {filepath} does not exist for user '{username}'")
+            return
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            data["agy_conversation_id"] = conv_id
+            self.storage.atomic_write_json(filepath, data, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save agy_conversation_id to {filepath} for user '{username}': {e}", exc_info=True)
+
+    async def set_session_conversation_id(self, username: str, session_id: str, conv_id: Optional[str]):
+        async with self.storage.session_locks[session_id]:
+            await asyncio.to_thread(self._sync_set_session_conversation_id, username, session_id, conv_id)
+
 
     def _sync_delete_session(self, username: str, session_id: str):
         filepath = self.storage.get_session_filepath(username, session_id)

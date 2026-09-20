@@ -100,6 +100,92 @@ async def test_process_message_success(mock_create, mock_remove, client, tmp_pat
     assert "<chat_history>" in content
     assert "[2024-01-01T12:00Z] User: Hallo" in content
 
+@patch("app.agy_client.os.remove")
+@patch("app.agy_client.asyncio.create_subprocess_exec")
+@pytest.mark.asyncio
+async def test_process_message_with_conversation_id(mock_create, mock_remove, client, tmp_path):
+    expected_response = {
+        "reply": "Apfel notiert!",
+        "context_truncated": False
+    }
+    
+    mock_process = MagicMock()
+    async def mock_communicate():
+        return (b"Apfel notiert!\n", b"")
+    mock_process.communicate = mock_communicate
+    mock_process.returncode = 0
+    mock_create.return_value = mock_process
+    
+    context = [{"is_user": True, "text": "Hallo", "timestamp": "2024-01-01T12:00Z"}]
+    message = "Ein Apfel."
+    
+    result = await client.process_message(context, message, cwd=str(tmp_path), conversation_id="conv-test-123")
+    
+    assert result == expected_response
+    mock_create.assert_called_once()
+    
+    args, kwargs = mock_create.call_args
+    assert "--conversation" in args
+    conv_arg = args[args.index("--conversation") + 1]
+    assert conv_arg == "conv-test-123"
+    
+    assert "--prompt" in args
+    prompt_arg = args[args.index("--prompt") + 1]
+    assert "Lies zwingend die Datei" not in prompt_arg
+    assert "<chat_history>" not in prompt_arg
+    assert "User: Ein Apfel." in prompt_arg
+    
+    # No temporary file should have been written or removed
+    mock_remove.assert_not_called()
+
+@patch("app.agy_client.asyncio.create_subprocess_exec")
+@pytest.mark.asyncio
+async def test_stream_message_with_conversation_id_and_init(mock_create, client, tmp_path):
+    mock_ndjson_lines = [
+        b'{"event":"init","conversation_id":"conv-new-999"}\n',
+        b'{"event":"step_update","step_update":{"text_delta":"Hallo"}}\n',
+        b'{"event":"result","result":{"response":"Hallo"}}\n'
+    ]
+    
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    async def mock_readline():
+        if mock_ndjson_lines:
+            return mock_ndjson_lines.pop(0)
+        return b''
+    mock_proc.stdout.readline = mock_readline
+    mock_proc.stderr.read = MagicMock(return_value=b'')
+    async def mock_wait(): return 0
+    mock_proc.wait = mock_wait
+    mock_create.return_value = mock_proc
+    
+    events = []
+    async for ev in client.stream_message(
+        context_messages=[{"text": "old"}],
+        new_message="new",
+        conversation_id="conv-resume-555"
+    ):
+        events.append(ev)
+        
+    args, _ = mock_create.call_args
+    assert "--conversation" in args
+    assert args[args.index("--conversation") + 1] == "conv-resume-555"
+    
+    init_events = [e for e in events if e.get("type") == "init"]
+    assert len(init_events) == 1
+    assert init_events[0]["conversation_id"] == "conv-new-999"
+
+def test_conversation_exists(client, tmp_path):
+    # Non-existent ID returns False
+    assert client.conversation_exists("non-existent-conv-id") is False
+    assert client.conversation_exists(None) is False
+    assert client.conversation_exists("") is False
+    
+    # Existing mock db
+    with patch("os.path.isfile", return_value=True):
+        assert client.conversation_exists("some-conv-id") is True
+
+
 @patch("app.agy_client.asyncio.create_subprocess_exec")
 @pytest.mark.asyncio
 async def test_process_message_with_multiple_images(mock_create, client):
