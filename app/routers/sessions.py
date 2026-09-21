@@ -8,7 +8,13 @@ from fastapi import APIRouter, Response, UploadFile, File, HTTPException, Depend
 from fastapi.responses import FileResponse
 
 from app.core.tasks import supervisor, fire_and_forget
-from app.core.config import MAX_ZIP_UPLOAD_SIZE
+from app.core.config import (
+    MAX_ZIP_UPLOAD_SIZE,
+    AGY_DEFAULT_MODEL,
+    AGY_DEFAULT_THINKING_EFFORT,
+    MODEL_CATALOG,
+    validate_model_and_effort,
+)
 from app.models.chat import ChatMessage
 from app.models.session import (
     SessionMetadata,
@@ -67,6 +73,15 @@ async def get_sessions_endpoint(username: str = Depends(get_current_user)):
         fire_and_forget(asyncio.to_thread(storage_service.cleanup_deleted_sessions, username))
 
     return await _call_main_or_service("get_sessions", session_service.get_sessions, username)
+
+
+@router.get("/models/catalog")
+async def get_models_catalog_endpoint():
+    return {
+        "default_model": AGY_DEFAULT_MODEL,
+        "default_effort": AGY_DEFAULT_THINKING_EFFORT,
+        "model_catalog": MODEL_CATALOG
+    }
 
 
 @router.get("/{session_id}/status")
@@ -144,8 +159,32 @@ async def update_settings_endpoint(session_id: str, req: SessionSettingsRequest,
         logger.warning(f"Settings update requested for non-existent session {session_id} by user '{username}'")
         raise HTTPException(status_code=404, detail="Session not found")
 
-    await _call_main_or_service("update_session_settings", session_service.update_session_settings, username, session_id, req.prompt, req.include_gps)
-    logger.info(f"User '{username}' updated settings for session {session_id}")
+    ok, err = validate_model_and_effort(req.model, req.thinking_effort)
+    if not ok:
+        logger.warning(f"Invalid settings for session {session_id} by user '{username}': {err}")
+        raise HTTPException(status_code=422, detail=err)
+
+    if req.model is not None or req.thinking_effort is not None:
+        await _call_main_or_service(
+            "update_session_settings",
+            session_service.update_session_settings,
+            username,
+            session_id,
+            req.prompt,
+            req.include_gps,
+            req.model,
+            req.thinking_effort
+        )
+    else:
+        await _call_main_or_service(
+            "update_session_settings",
+            session_service.update_session_settings,
+            username,
+            session_id,
+            req.prompt,
+            req.include_gps
+        )
+    logger.info(f"User '{username}' updated settings for session {session_id} (model='{req.model}', effort='{req.thinking_effort}')")
     return {"success": True}
 
 

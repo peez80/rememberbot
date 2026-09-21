@@ -8,7 +8,12 @@ import logging
 import subprocess
 from typing import List, Dict, Any, Optional, AsyncGenerator
 
-from app.core.config import ICON_GENERATION_TIMEOUT_SECONDS
+from app.core.config import (
+    ICON_GENERATION_TIMEOUT_SECONDS,
+    AGY_DEFAULT_MODEL,
+    AGY_DEFAULT_THINKING_EFFORT,
+    MODEL_CATALOG,
+)
 from app.core.formatters import format_thought_blocks, sanitize_svg
 
 logger = logging.getLogger(__name__)
@@ -175,13 +180,26 @@ class AgyClient:
         attachments: list = None,
         system_prompt: str = None,
         cwd: str = None,
-        conversation_id: str = None
+        conversation_id: str = None,
+        model: str = None,
+        thinking_effort: str = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         prompt, history_file_path = self._build_prompt_and_history(
             context_messages, new_message, image_paths, attachments, system_prompt, cwd, conversation_id
         )
 
+        effective_model = model
+        effective_effort = thinking_effort
+        if effective_model and effective_model != "default":
+            spec = MODEL_CATALOG.get(effective_model, {})
+            if not spec.get("supports_thinking", True):
+                effective_effort = None
+
         cmd = [self.executable_path, "--dangerously-skip-permissions", "--output-format", "stream-json"]
+        if effective_model and effective_model != "default":
+            cmd.extend(["--model", effective_model])
+        if effective_effort and effective_effort != "default":
+            cmd.extend(["--effort", effective_effort])
         if conversation_id:
             cmd.extend(["--conversation", conversation_id])
         cmd.extend(["--prompt", prompt])
@@ -289,14 +307,27 @@ class AgyClient:
         attachments: list = None,
         system_prompt: str = None,
         cwd: str = None,
-        conversation_id: str = None
+        conversation_id: str = None,
+        model: str = None,
+        thinking_effort: str = None
     ) -> dict:
         context_truncated = False
         prompt, history_file_path = self._build_prompt_and_history(
             context_messages, new_message, image_paths, attachments, system_prompt, cwd, conversation_id
         )
 
+        effective_model = model
+        effective_effort = thinking_effort
+        if effective_model and effective_model != "default":
+            spec = MODEL_CATALOG.get(effective_model, {})
+            if not spec.get("supports_thinking", True):
+                effective_effort = None
+
         cmd = [self.executable_path, "--dangerously-skip-permissions"]
+        if effective_model and effective_model != "default":
+            cmd.extend(["--model", effective_model])
+        if effective_effort and effective_effort != "default":
+            cmd.extend(["--effort", effective_effort])
         if conversation_id:
             cmd.extend(["--conversation", conversation_id])
         cmd.extend(["--prompt", prompt])

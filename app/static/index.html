@@ -43,7 +43,10 @@
                 <div class="header-title">
                     <img id="header-chat-icon" class="chat-title-icon" src="" alt="Chat Icon" style="display: none;">
                     <i class="ph-fill ph-robot" id="header-default-icon"></i>
-                    <h1 id="header-chat-title">RememberBot</h1>
+                    <div>
+                        <h1 id="header-chat-title">RememberBot</h1>
+                        <div id="session-model-indicator" class="header-subtitle" style="display: none;"></div>
+                    </div>
                 </div>
                 <div id="user-badge" class="user-badge" style="display: none;" title="Benutzer"></div>
                 <button id="system-prompt-btn" class="icon-button" title="Chat-Einstellungen" disabled>
@@ -126,7 +129,23 @@
                     <label for="system-prompt-input" style="font-size: 0.9rem; font-weight: 500;">System-Prompt</label>
                     <textarea id="system-prompt-input" placeholder="Du bist ein hilfreicher Assistent..." class="prompt-textarea"></textarea>
                 </div>
-                <div style="display: flex; gap: 0.5rem; align-items: center; margin-top: 0.5rem;">
+                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    <label for="chat-model-select" style="font-size: 0.9rem; font-weight: 500;">KI-Modell</label>
+                    <select id="chat-model-select" class="text-input" style="padding: 0.5rem; border-radius: 0.25rem; border: 1px solid var(--border-color); background-color: var(--bg-color); color: var(--text-main); font-family: inherit;">
+                        <option value="">Standard (Host / Server-Default)</option>
+                    </select>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    <label for="chat-thinking-effort-select" style="font-size: 0.9rem; font-weight: 500;">Thinking Effort (Reasoning-Tiefe)</label>
+                    <select id="chat-thinking-effort-select" class="text-input" style="padding: 0.5rem; border-radius: 0.25rem; border: 1px solid var(--border-color); background-color: var(--bg-color); color: var(--text-main); font-family: inherit;">
+                        <option value="">Standard / Automatisch</option>
+                        <option value="low">Niedrig (Low - Schnell)</option>
+                        <option value="medium">Mittel (Medium - Ausgewogen)</option>
+                        <option value="high">Hoch (High - Tiefes Reasoning)</option>
+                    </select>
+                </div>
+                <div id="settings-error-banner" style="display: none; padding: 0.5rem 0.75rem; border-radius: 4px; background-color: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #ef4444; font-size: 0.85rem;"></div>
+                <div style="display: flex; gap: 0.5rem; align-items: center; margin-top: 0.25rem;">
                     <input type="checkbox" id="gps-setting-input">
                     <label for="gps-setting-input" style="font-size: 0.9rem; font-weight: 500;">Aktuellen Standort (GPS) mit Nachrichten senden</label>
                 </div>

@@ -174,6 +174,8 @@ class ChatService:
 
         system_prompt = settings.get("prompt", "")
         include_gps = settings.get("include_gps", False)
+        model = settings.get("model")
+        thinking_effort = settings.get("thinking_effort")
 
         if include_gps and location:
             loc_instruction = f"\nStandort des Nutzers: {location}"
@@ -207,7 +209,9 @@ class ChatService:
             attachments=attachments,
             system_prompt=system_prompt,
             cwd=cwd,
-            conversation_id=conversation_id
+            conversation_id=conversation_id,
+            model=model,
+            thinking_effort=thinking_effort
         )
 
         ai_reply = format_local_links(result.get("reply", ""), username, session_id)
@@ -333,6 +337,8 @@ class ChatService:
 
         system_prompt = settings.get("prompt", "")
         include_gps = settings.get("include_gps", False)
+        model = settings.get("model")
+        thinking_effort = settings.get("thinking_effort")
 
         if include_gps and location:
             loc_instruction = f"\nStandort des Nutzers: {location}"
@@ -372,7 +378,9 @@ class ChatService:
                     attachments=attachments,
                     system_prompt=system_prompt,
                     cwd=cwd,
-                    conversation_id=conversation_id
+                    conversation_id=conversation_id,
+                    model=model,
+                    thinking_effort=thinking_effort
                 ):
                     event_type = event.get("type")
                     if event_type == "init":

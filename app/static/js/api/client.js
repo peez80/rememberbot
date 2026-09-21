@@ -12,7 +12,7 @@ const originalFetch = window.fetch;
 
 export const apiFetch = async (url, options = {}) => {
     const response = await originalFetch(url, options);
-    if (response.status === 401 && !url.includes('/api/auth/status') && !url.includes('/api/auth/login')) {
+    if (response.status === 401 && !url.includes('/api/auth/status') && !url.includes('/api/auth/login') && !url.includes('/models/catalog')) {
         if (onAuthErrorHandler) {
             onAuthErrorHandler();
         }
@@ -64,6 +64,10 @@ export const getSessionSettings = async (sessionId) => {
     return apiFetch(`/api/sessions/${sessionId}/settings`);
 };
 
+export const getModelsCatalog = async () => {
+    return apiFetch(`/api/sessions/models/catalog`);
+};
+
 export const getSessionHistory = async (sessionId) => {
     return apiFetch(`/api/sessions/${sessionId}/history`);
 };
@@ -72,11 +76,11 @@ export const getSessionStatus = async (sessionId) => {
     return apiFetch(`/api/sessions/${sessionId}/status`);
 };
 
-export const updateSessionSettings = async (sessionId, { prompt, include_gps }) => {
+export const updateSessionSettings = async (sessionId, { prompt, include_gps, model, thinking_effort }) => {
     return apiFetch(`/api/sessions/${sessionId}/settings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, include_gps })
+        body: JSON.stringify({ prompt, include_gps, model, thinking_effort })
     });
 };
 

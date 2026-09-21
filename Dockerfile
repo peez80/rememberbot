@@ -29,6 +29,8 @@ COPY app/ ./app/
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV DATA_DIR=/app/data
+ENV AGY_DEFAULT_MODEL=gemini-3.8-flash
+ENV AGY_DEFAULT_THINKING_EFFORT=medium
 
 # Expose port
 EXPOSE 8000

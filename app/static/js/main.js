@@ -40,6 +40,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const systemPromptBtn = document.getElementById("system-prompt-btn");
     const systemPromptForm = document.getElementById("system-prompt-form");
     const systemPromptInput = document.getElementById("system-prompt-input");
+    const chatModelSelect = document.getElementById("chat-model-select");
+    const chatThinkingEffortSelect = document.getElementById("chat-thinking-effort-select");
+    const settingsErrorBanner = document.getElementById("settings-error-banner");
+    const sessionModelIndicator = document.getElementById("session-model-indicator");
     const gpsSettingInput = document.getElementById("gps-setting-input");
     const closePromptBtn = document.getElementById("close-prompt-btn");
     const savePromptBtn = document.getElementById("save-prompt-btn");
@@ -47,6 +51,100 @@ document.addEventListener("DOMContentLoaded", () => {
     const importSessionBtn = document.getElementById("import-session-btn");
     const importSessionInput = document.getElementById("import-session-input");
     const importStatusText = document.getElementById("import-status-text");
+
+    let modelCatalog = null;
+
+    const ensureModelCatalogLoaded = async () => {
+        if (modelCatalog) return;
+        try {
+            const catRes = await api.getModelsCatalog();
+            if (catRes.ok) {
+                const catData = await catRes.json();
+                modelCatalog = catData.model_catalog;
+                if (chatModelSelect && chatModelSelect.options.length <= 1) {
+                    chatModelSelect.innerHTML = '<option value="">Standard (Host / Server-Default)</option>';
+                    Object.entries(modelCatalog).forEach(([key, spec]) => {
+                        if (key !== "default") {
+                            const opt = document.createElement("option");
+                            opt.value = key;
+                            opt.textContent = spec.label || key;
+                            chatModelSelect.appendChild(opt);
+                        }
+                    });
+                }
+            }
+        } catch (e) {
+            console.error("Failed to load model catalog", e);
+        }
+    };
+
+    const updateEffortOptionsForModel = (selectedModel) => {
+        if (!chatThinkingEffortSelect) return;
+        const modelKey = selectedModel || "default";
+        const spec = modelCatalog ? modelCatalog[modelKey] : null;
+        const supportsThinking = spec ? (spec.supports_thinking !== false) : true;
+        const allowed = spec ? (spec.allowed_efforts || []) : ["low", "high"];
+
+        if (!supportsThinking) {
+            chatThinkingEffortSelect.disabled = true;
+            chatThinkingEffortSelect.value = "";
+            Array.from(chatThinkingEffortSelect.options).forEach(opt => {
+                opt.disabled = true;
+            });
+            return;
+        }
+
+        chatThinkingEffortSelect.disabled = false;
+        Array.from(chatThinkingEffortSelect.options).forEach(opt => {
+            const val = opt.value;
+            if (!val) {
+                opt.disabled = false;
+                opt.text = "Standard / Automatisch";
+            } else {
+                const isAllowed = allowed.includes(val);
+                opt.disabled = !isAllowed;
+                if (!isAllowed) {
+                    if (!opt.text.includes("(nicht unterstützt)")) {
+                        opt.text = opt.text.replace(" (nicht verfügbar)", "").replace(" (nicht unterstützt)", "") + " (nicht unterstützt)";
+                    }
+                } else {
+                    opt.text = opt.text.replace(" (nicht verfügbar)", "").replace(" (nicht unterstützt)", "");
+                }
+            }
+        });
+
+        const currentEffort = chatThinkingEffortSelect.value;
+        if (currentEffort && !allowed.includes(currentEffort)) {
+            chatThinkingEffortSelect.value = "";
+        }
+    };
+
+    const updateHeaderModelIndicator = (model, effort) => {
+        if (!sessionModelIndicator) return;
+        if (!model && !effort) {
+            sessionModelIndicator.style.display = "none";
+            sessionModelIndicator.textContent = "";
+            return;
+        }
+
+        const modelSpec = modelCatalog && model ? modelCatalog[model] : null;
+        const modelLabel = modelSpec ? modelSpec.label : (model || "Standard");
+
+        let effortLabel = "";
+        if (effort === "low") effortLabel = " · Niedriges Thinking";
+        else if (effort === "medium") effortLabel = " · Mittleres Thinking";
+        else if (effort === "high") effortLabel = " · Hohes Thinking";
+
+        sessionModelIndicator.textContent = `${modelLabel}${effortLabel}`;
+        sessionModelIndicator.style.display = "block";
+    };
+
+    if (chatModelSelect) {
+        chatModelSelect.addEventListener("change", () => {
+            if (settingsErrorBanner) settingsErrorBanner.style.display = "none";
+            updateEffortOptionsForModel(chatModelSelect.value);
+        });
+    }
 
     // 401 Handler
     const handleAuthError = () => {
@@ -171,6 +269,15 @@ document.addEventListener("DOMContentLoaded", () => {
                     if (gpsSettingInput) {
                         gpsSettingInput.checked = state.currentSessionGpsEnabled;
                     }
+                    await ensureModelCatalogLoaded();
+                    if (chatModelSelect) {
+                        chatModelSelect.value = promptData.model || "";
+                    }
+                    if (chatThinkingEffortSelect) {
+                        chatThinkingEffortSelect.value = promptData.thinking_effort || "";
+                    }
+                    updateEffortOptionsForModel(promptData.model);
+                    updateHeaderModelIndicator(promptData.model, promptData.thinking_effort);
                 }
             }
 
@@ -583,6 +690,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
             const promptText = systemPromptInput ? systemPromptInput.value.trim() : "";
             const includeGps = gpsSettingInput ? gpsSettingInput.checked : false;
+            const modelVal = chatModelSelect ? (chatModelSelect.value || null) : null;
+            const effortVal = (chatThinkingEffortSelect && !chatThinkingEffortSelect.disabled) ? (chatThinkingEffortSelect.value || null) : null;
             const titleInput = document.getElementById("chat-title-input");
             const titleText = titleInput ? titleInput.value.trim() : "";
             
@@ -590,9 +699,18 @@ document.addEventListener("DOMContentLoaded", () => {
                 savePromptBtn.disabled = true;
                 savePromptBtn.textContent = "Wird gespeichert...";
             }
+            if (settingsErrorBanner) {
+                settingsErrorBanner.style.display = "none";
+                settingsErrorBanner.textContent = "";
+            }
 
             try {
-                const promptPromise = api.updateSessionSettings(state.currentSessionId, { prompt: promptText, include_gps: includeGps });
+                const promptPromise = api.updateSessionSettings(state.currentSessionId, {
+                    prompt: promptText,
+                    include_gps: includeGps,
+                    model: modelVal,
+                    thinking_effort: effortVal
+                });
                 const session = state.lastSessions?.find(s => s.id === state.currentSessionId);
                 let titlePromise = null;
                 if (titleText && session && session.title !== titleText) {
@@ -600,20 +718,37 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
 
                 const responses = await Promise.all([promptPromise, ...(titlePromise ? [titlePromise] : [])]);
+                const settingsRes = responses[0];
                 const allOk = responses.every(res => res.ok);
 
                 if (allOk) {
                     state.currentSessionGpsEnabled = includeGps;
+                    updateHeaderModelIndicator(modelVal, effortVal);
                     modals.closeSystemPromptModal();
                     if (titlePromise) {
                         await loadSessions();
                     }
                 } else {
-                    alert("Fehler beim Speichern der Einstellungen.");
+                    let errMsg = "Fehler beim Speichern der Einstellungen.";
+                    try {
+                        const errJson = await settingsRes.json();
+                        if (errJson && errJson.detail) errMsg = errJson.detail;
+                    } catch (_) {}
+                    if (settingsErrorBanner) {
+                        settingsErrorBanner.textContent = errMsg;
+                        settingsErrorBanner.style.display = "block";
+                    } else {
+                        alert(errMsg);
+                    }
                 }
             } catch (err) {
                 console.error("Error saving settings", err);
-                alert("Verbindungsfehler beim Speichern.");
+                if (settingsErrorBanner) {
+                    settingsErrorBanner.textContent = "Verbindungsfehler beim Speichern.";
+                    settingsErrorBanner.style.display = "block";
+                } else {
+                    alert("Verbindungsfehler beim Speichern.");
+                }
             } finally {
                 if (savePromptBtn) {
                     savePromptBtn.disabled = false;

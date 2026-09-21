@@ -89,6 +89,11 @@ RememberBot supports the following environment variables:
 - `LOG_FORMAT`: Format of log messages:
   - `text` (default): Human-readable formatted console output (`YYYY-MM-DD HH:MM:SS [LEVEL] logger (file:line) - message`).
   - `json`: Structured NDJSON format for log aggregators (e.g., Loki, ELK, CloudWatch).
+- `AGY_DEFAULT_MODEL`: Global default model passed to `agy` CLI (default: `gemini-3.8-flash`). Supported options include Gemini models (`gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.1-pro`), Claude (`claude-sonnet-4-6`, `claude-opus-4-6-thinking`), and GPT (`gpt-oss-120b-medium`).
+- `AGY_DEFAULT_THINKING_EFFORT`: Global default reasoning depth for models supporting thinking effort (`low`, `medium`, `high` for Gemini Flash models; `low`, `high` for Gemini 3.1 Pro - default: `medium`). Models without separate effort configuration (Claude, GPT-OSS) automatically omit the effort flag.
+
+> [!NOTE]
+> **Per-Session Customization:** In addition to environment defaults, users can configure the model and thinking effort per chat session via the session settings modal (⚙️ icon). The active session's model and effort are shown as a badge in the chat header.
 
 ## CI/CD Pipeline
 
@@ -120,6 +125,7 @@ docker-compose run --rm web pytest tests/
 This will run all tests (both unit tests and Playwright E2E browser tests) together:
 - Centralized error logging, observability & exception handlers (`tests/test_logging.py`)
 - Local storage logic, thumbnail creation & $O(1)$ session lookups (`tests/test_storage.py`, `tests/test_performance_storage.py`)
+- Hybrid model & thinking effort configuration, validation, CLI flags (`tests/test_model_and_thinking_configuration.py`)
 - API endpoints, upload thumbnail routing & caching headers (`tests/test_main.py`, `tests/test_upload_thumbnails_and_caching.py`, `tests/test_thinking_status.py`, `tests/test_chat_stability.py`, `tests/test_streaming.py`)
 - Progressive rendering, thumbnail links & infinite scroll integrity (`tests/test_progressive_rendering.py`, `tests/test_scroll_button.py`)
 - `agy` CLI interaction, streaming and JSON parsing (`tests/test_agy_client.py`, `tests/test_streaming.py`)

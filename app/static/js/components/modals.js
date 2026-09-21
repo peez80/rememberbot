@@ -53,6 +53,11 @@ export const openSystemPromptModal = () => {
         importStatusText.style.display = "none";
         importStatusText.textContent = "";
     }
+    const settingsErrorBanner = document.getElementById("settings-error-banner");
+    if (settingsErrorBanner) {
+        settingsErrorBanner.style.display = "none";
+        settingsErrorBanner.textContent = "";
+    }
     
     const modal = getSystemPromptModal();
     if (modal) modal.style.display = "flex";

@@ -11,6 +11,8 @@ class SessionMetadata(BaseModel):
 class SessionSettingsRequest(BaseModel):
     prompt: str = ""
     include_gps: bool = False
+    model: Optional[str] = None
+    thinking_effort: Optional[str] = None
 
 class SessionTitleRequest(BaseModel):
     title: str

@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from typing import List, Optional
 
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
@@ -23,6 +24,7 @@ from .logging_config import setup_logging
 setup_logging()
 logger = logging.getLogger(__name__)
 
+from .core.config import AGY_DEFAULT_MODEL, AGY_DEFAULT_THINKING_EFFORT
 from .core.tasks import supervisor, fire_and_forget
 from .core.formatters import format_thought_blocks, format_local_links
 from .agy_client import agy_client
@@ -43,7 +45,70 @@ from .routers.sessions import router as sessions_router
 from .routers.files import router as files_router
 from .routers.chat import router as chat_router
 
-app = FastAPI(title="RememberBot")
+
+async def validate_agy_default_configuration():
+    """
+    Validates the configured AGY default model and thinking effort at startup via a probe call to agy.
+    Logs success with info or failure with warning and fallback.
+    """
+    if not AGY_DEFAULT_MODEL and not AGY_DEFAULT_THINKING_EFFORT:
+        logger.debug("Keine abweichenden AGY Defaults für Modell oder Thinking Effort gesetzt. Startup-Validierung übersprungen.")
+        return
+
+    probe_cmd = ["agy", "--dangerously-skip-permissions"]
+    if AGY_DEFAULT_MODEL:
+        probe_cmd.extend(["--model", AGY_DEFAULT_MODEL])
+    if AGY_DEFAULT_THINKING_EFFORT:
+        probe_cmd.extend(["--effort", AGY_DEFAULT_THINKING_EFFORT])
+    probe_cmd.extend(["--prompt", "ping"])
+
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *probe_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=10.0)
+        except asyncio.TimeoutError:
+            process.kill()
+            stdout_bytes, stderr_bytes = await process.communicate()
+            logger.warning(
+                f"Startup-Validierung von agy dauerte länger als 10s (Timeout). "
+                f"Modell='{AGY_DEFAULT_MODEL}', Effort='{AGY_DEFAULT_THINKING_EFFORT}'."
+            )
+            return
+
+        if process.returncode == 0:
+            logger.info(
+                f"Startup-Validierung der agy Default-Konfiguration erfolgreich: "
+                f"Modell='{AGY_DEFAULT_MODEL}', Thinking Effort='{AGY_DEFAULT_THINKING_EFFORT}'."
+            )
+        else:
+            stderr_str = stderr_bytes.decode('utf-8', errors='replace').strip()
+            logger.warning(
+                f"Startup-Validierung der agy Default-Konfiguration fehlgeschlagen "
+                f"(Exit-Code {process.returncode}, Modell='{AGY_DEFAULT_MODEL}', Thinking Effort='{AGY_DEFAULT_THINKING_EFFORT}'): {stderr_str}. "
+                "Verwende Fallback auf Standard-CLI-Verhalten."
+            )
+    except FileNotFoundError:
+        logger.info("agy Executable nicht gefunden bei Startup-Validierung (Mock- oder Dev-Modus aktiv).")
+    except Exception as e:
+        logger.warning(
+            f"Unerwarteter Fehler bei Startup-Validierung der agy-Konfiguration "
+            f"(Modell='{AGY_DEFAULT_MODEL}', Thinking Effort='{AGY_DEFAULT_THINKING_EFFORT}'): {e}",
+            exc_info=True
+        )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if not os.getenv("PYTEST_CURRENT_TEST") and os.getenv("TESTING") != "1":
+        await validate_agy_default_configuration()
+    yield
+
+
+app = FastAPI(title="RememberBot", lifespan=lifespan)
 
 # SEC-09: Global HTTP Security Headers Middleware
 @app.middleware("http")

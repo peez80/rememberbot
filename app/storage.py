@@ -13,7 +13,7 @@ from collections import defaultdict
 from typing import Optional, List, Dict, Any
 from PIL import Image, ImageOps
 
-from app.core.config import DATA_DIR
+from app.core.config import DATA_DIR, resolve_session_model_and_effort
 from app.core.formatters import sanitize_svg
 
 logger = logging.getLogger(__name__)
@@ -272,24 +272,29 @@ async def delete_session(username: str, session_id: str):
 def _sync_get_session_settings(username: str, session_id: str) -> dict:
     filepath = get_session_filepath(username, session_id)
     if not os.path.exists(filepath):
-        return {"prompt": "", "include_gps": False}
+        eff_model, eff_effort = resolve_session_model_and_effort(None, None)
+        return {"prompt": "", "include_gps": False, "model": eff_model, "thinking_effort": eff_effort}
 
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             data = json.load(f)
+            eff_model, eff_effort = resolve_session_model_and_effort(data.get("model"), data.get("thinking_effort"))
             return {
                 "prompt": data.get("system_prompt", ""),
-                "include_gps": data.get("include_gps", False)
+                "include_gps": data.get("include_gps", False),
+                "model": eff_model,
+                "thinking_effort": eff_effort
             }
     except Exception as e:
         logger.warning(f"Failed to load settings from {filepath} for user '{username}': {e}", exc_info=True)
-        return {"prompt": "", "include_gps": False}
+        eff_model, eff_effort = resolve_session_model_and_effort(None, None)
+        return {"prompt": "", "include_gps": False, "model": eff_model, "thinking_effort": eff_effort}
 
 async def get_session_settings(username: str, session_id: str) -> dict:
     async with session_locks[session_id]:
         return await asyncio.to_thread(_sync_get_session_settings, username, session_id)
 
-def _sync_update_session_settings(username: str, session_id: str, prompt: str, include_gps: bool):
+def _sync_update_session_settings(username: str, session_id: str, prompt: str, include_gps: bool, model: Optional[str] = None, thinking_effort: Optional[str] = None):
     filepath = get_session_filepath(username, session_id)
     if not os.path.exists(filepath):
         logger.warning(f"Cannot update settings: session file {filepath} does not exist for user '{username}'")
@@ -301,13 +306,15 @@ def _sync_update_session_settings(username: str, session_id: str, prompt: str, i
 
         data["system_prompt"] = prompt
         data["include_gps"] = include_gps
+        data["model"] = model
+        data["thinking_effort"] = thinking_effort
         atomic_write_json(filepath, data, indent=2)
     except Exception as e:
         logger.error(f"Failed to update session settings in {filepath} for user '{username}': {e}", exc_info=True)
 
-async def update_session_settings(username: str, session_id: str, prompt: str, include_gps: bool):
+async def update_session_settings(username: str, session_id: str, prompt: str, include_gps: bool, model: Optional[str] = None, thinking_effort: Optional[str] = None):
     async with session_locks[session_id]:
-        await asyncio.to_thread(_sync_update_session_settings, username, session_id, prompt, include_gps)
+        await asyncio.to_thread(_sync_update_session_settings, username, session_id, prompt, include_gps, model, thinking_effort)
 
 def _sync_cleanup_deleted_sessions(username: str, days: int = 30):
     user_dir = os.path.join(DATA_DIR, username)

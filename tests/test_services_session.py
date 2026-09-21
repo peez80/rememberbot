@@ -24,11 +24,11 @@ async def test_session_lifecycle(session_service):
     
     # Settings
     settings = await session_service.get_session_settings("alice", session_id)
-    assert settings == {"prompt": "", "include_gps": False}
+    assert settings == {"prompt": "", "include_gps": False, "model": "gemini-3.8-flash", "thinking_effort": "medium"}
     
     await session_service.update_session_settings("alice", session_id, "New prompt", True)
     settings = await session_service.get_session_settings("alice", session_id)
-    assert settings == {"prompt": "New prompt", "include_gps": True}
+    assert settings == {"prompt": "New prompt", "include_gps": True, "model": "gemini-3.8-flash", "thinking_effort": "medium"}
     
     # Messages
     await session_service.save_session_message("alice", session_id, {"text": "Hello", "is_user": True})
