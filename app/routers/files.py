@@ -29,7 +29,11 @@ async def download_file(username: str, session_id: str, file_path: str, current_
         raise HTTPException(status_code=400, detail="Invalid path")
 
     if os.path.isfile(full_path):
-        return FileResponse(full_path, filename=os.path.basename(full_path))
+        return FileResponse(
+            full_path,
+            filename=os.path.basename(full_path),
+            headers={"Cache-Control": "no-cache, must-revalidate"}
+        )
     logger.warning(f"Data file not found: '{file_path}' in session {session_id} for user '{username}'")
     raise HTTPException(status_code=404, detail="File not found")
 

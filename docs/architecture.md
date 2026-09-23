@@ -114,3 +114,21 @@ Das Frontend verzichtet auf schwere Frameworks und Build-Tools und setzt auf mod
 2. **Hintergrund-Absicherung**: SSE-Streams und Hintergrundaufgaben laufen bei Verbindungsabbrüchen via `asyncio.shield` und `BackgroundSupervisor` fehlerfrei bis zur Persistierung durch.
 3. **ZipSlip-Schutz**: ZIP-Importe weisen bösartige Pfade (`..` oder absolute Pfade) strikt ab.
 4. **XSS- & SVG-Sanitization**: Vollständige Bereinigung über DOMPurify im Frontend und `defusedxml`/Regex-Prüfung im Backend.
+
+---
+
+## 5. Caching- & Cache-Busting-Architektur
+
+Die Caching-Strategie von RememberBot ist auf maximale Performance (Zero-Byte Revalidierung) und vollständige Stale-Cache-Prävention ausgelegt:
+
+1. **`GET /` (`index.html`)**:
+   - Antwortet mit `Cache-Control: no-cache, no-store, must-revalidate`.
+   - Injiziert serverseitig in `serve_index()` dynamische Cache-Busting-Query-Parameter (`?v=<mtime>`) für `styles.css`, `main.js` und `favicon.png`.
+2. **Statische Assets (`/static/**`)**:
+   - Werden über die angepasste Klasse `NoCacheStaticFiles` mit `Cache-Control: no-cache` ausgeliefert.
+   - Ermöglicht dem Browser, modulare Vanilla-ES-Dateien (`state.js`, `components/*.js`, `utils/*.js`, `api/*.js`) im lokalen Disk-Cache vorzuhalten, zwingt ihn jedoch zur Revalidierung via `ETag` (`If-None-Match`). Bei unveränderten Dateien antwortet der Server mit `304 Not Modified` (< 1 ms Latenz, 0 Bytes Payload). Bei Dateiänderungen wird der neue Stand sofort mit `200 OK` geladen.
+3. **Icons & dynamische Session-Dateien**:
+   - `/api/sessions/{id}/icon` und `/app/data/...`: Werden mit `Cache-Control: no-cache, must-revalidate` ausgeliefert, sodass neu generierte Avatare oder Workspace-Dateien sofort aktualisiert werden.
+4. **Unveränderliche Medien (Uploads & Thumbnails)**:
+   - `/uploads/{id}/...`: Werden mit `Cache-Control: public, max-age=31536000, immutable` dauerhaft gecacht, da Dateinamen eindeutige Content-/Zufallspräfixe tragen.
+

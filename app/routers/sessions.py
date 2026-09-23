@@ -123,7 +123,8 @@ async def get_session_icon(session_id: str, username: str = Depends(get_current_
             media_type="image/svg+xml",
             headers={
                 "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
-                "X-Content-Type-Options": "nosniff"
+                "X-Content-Type-Options": "nosniff",
+                "Cache-Control": "no-cache, must-revalidate"
             }
         )
     logger.warning(f"Icon not found for session {session_id} (user '{username}')")

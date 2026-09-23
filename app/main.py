@@ -1,4 +1,5 @@
 import os
+import re
 import asyncio
 import logging
 from contextlib import asynccontextmanager
@@ -157,10 +158,18 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 # Initialize storage on startup
 init_storage()
 
+class NoCacheStaticFiles(StaticFiles):
+    """StaticFiles subclass that serves files with Cache-Control: no-cache to enforce browser revalidation."""
+    def file_response(self, *args, **kwargs) -> Response:
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
 # Mount static files
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 os.makedirs(static_dir, exist_ok=True)
-app.mount("/static", StaticFiles(directory=static_dir), name="static")
+app.mount("/static", NoCacheStaticFiles(directory=static_dir), name="static")
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
@@ -168,7 +177,7 @@ async def favicon():
     if not os.path.exists(favicon_path):
         logger.warning(f"Favicon not found at {favicon_path}")
         raise HTTPException(status_code=404, detail="Favicon not found")
-    return FileResponse(favicon_path)
+    return FileResponse(favicon_path, headers={"Cache-Control": "no-cache"})
 
 # --- Router Registration ---
 app.include_router(auth_router)
@@ -196,12 +205,37 @@ def _format_local_links(text: str, username: str, session_id: str) -> str:
 def _format_thoughts_for_storage(text: str) -> str:
     return format_thought_blocks(text, is_streaming=False)
 
+def _get_static_asset_version(relative_path: str) -> str:
+    """Returns the mtime timestamp of a static asset as a cache-busting version string."""
+    try:
+        full_path = os.path.join(static_dir, relative_path)
+        return str(int(os.path.getmtime(full_path)))
+    except OSError:
+        return "1"
+
 @app.get("/", response_class=HTMLResponse)
 async def serve_index():
     index_file = os.path.join(static_dir, "index.html")
     try:
         with open(index_file, "r", encoding="utf-8") as f:
-            return f.read()
+            content = f.read()
+
+        styles_v = _get_static_asset_version("styles.css")
+        main_v = _get_static_asset_version(os.path.join("js", "main.js"))
+        favicon_v = _get_static_asset_version("favicon.png")
+
+        content = re.sub(r'href="/static/styles\.css(\?v=[^"\'\s]*)?"', f'href="/static/styles.css?v={styles_v}"', content)
+        content = re.sub(r'src="/static/js/main\.js(\?v=[^"\'\s]*)?"', f'src="/static/js/main.js?v={main_v}"', content)
+        content = re.sub(r'href="/static/favicon\.png(\?v=[^"\'\s]*)?"', f'href="/static/favicon.png?v={favicon_v}"', content)
+
+        return HTMLResponse(
+            content=content,
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
     except Exception as e:
         logger.error(f"Failed to load index.html from {index_file}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Could not load index.html")
