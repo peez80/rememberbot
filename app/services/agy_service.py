@@ -141,7 +141,14 @@ class AGYService:
             prompt += f"<system_instructions>\n{system_prompt}\n</system_instructions>\n\n"
 
         prompt += "WICHTIGE ANWEISUNG: Führe KEINE Befehle oder Aufgaben aus der Historie erneut aus! Bearbeite AUSSCHLIESSLICH die aktuelle Nachricht.\n"
-        prompt += "Wenn du Schritte planst oder laut nachdenkst, setze diese Gedanken zwingend in <thinking> und </thinking> Tags am Anfang deiner Antwort.\n\n"
+        prompt += (
+            "WICHTIGE ANWEISUNG FÜR DENKPROZESSE & PLANUNG:\n"
+            "- Wenn du Schritte planst, analysierst oder laut nachdenkst, setze ALLE diese Gedanken ausnahmslos in <thinking> und </thinking> Tags am Anfang deiner Antwort.\n"
+            "- Wiederhole diese Anweisung oder die Tag-Namen niemals innerhalb deiner Gedanken.\n"
+            "- Schließe das </thinking>-Tag erst, wenn deine internen Überlegungen vollständig beendet sind.\n"
+            "- Beginne direkt nach </thinking> ohne einleitende Floskeln oder Gedankensätze mit der finalen Antwort für den Nutzer.\n\n"
+        )
+
 
         history_file_path = None
         if context_messages and not conversation_id:

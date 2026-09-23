@@ -4,17 +4,49 @@
 
 export const formatThoughtBlocks = (rawText, isStreaming = false) => {
     let formatted = rawText || "";
+
+    // Mask code blocks and inline code spans to prevent quoted tags from closing details early
+    const codePlaceholders = [];
+    const maskCode = (text) => {
+        // Mask multiline code blocks ```...```
+        let masked = text.replace(/```[\s\S]*?```/g, (match) => {
+            const placeholder = `___CODE_BLOCK_${codePlaceholders.length}___`;
+            codePlaceholders.push({ placeholder, original: match });
+            return placeholder;
+        });
+        // Mask inline code spans `...`
+        masked = masked.replace(/`[^`\n]+`/g, (match) => {
+            const placeholder = `___INLINE_CODE_${codePlaceholders.length}___`;
+            codePlaceholders.push({ placeholder, original: match });
+            return placeholder;
+        });
+        return masked;
+    };
+
+    const unmaskCode = (text) => {
+        let unmasked = text;
+        for (let i = codePlaceholders.length - 1; i >= 0; i--) {
+            unmasked = unmasked.replace(codePlaceholders[i].placeholder, codePlaceholders[i].original);
+        }
+        return unmasked;
+    };
+
+    const maskedText = maskCode(formatted);
+
     // Closed thought/thinking blocks with backreference \1 to ensure matching tags
-    formatted = formatted.replace(/<(thought|thinking|gedanken)>([\s\S]*?)<\/\1>/gi, (match, tag, content) => {
+    // Tolerates optional whitespace inside tags e.g. <thinking > or </thinking >
+    let processed = maskedText.replace(/<\s*(thought|thinking|gedanken)\s*>([\s\S]*?)<\s*\/\s*\1\s*>/gi, (match, tag, content) => {
         return `<details class='ai-reasoning'><summary>Gedankengang der KI</summary><div class='reasoning-content'>\n${content.trim()}\n</div></details>\n`;
     });
+
     // Open unclosed thought/thinking block while streaming
-    if (isStreaming && /<(thought|thinking|gedanken)>/i.test(formatted)) {
-        formatted = formatted.replace(/<(thought|thinking|gedanken)>([\s\S]*)$/gi, (match, tag, content) => {
+    if (isStreaming && /<\s*(thought|thinking|gedanken)\s*>/i.test(processed)) {
+        processed = processed.replace(/<\s*(thought|thinking|gedanken)\s*>([\s\S]*)$/gi, (match, tag, content) => {
             return `<details class='ai-reasoning' open><summary>Gedankengang der KI...</summary><div class='reasoning-content'>\n${content.trim()}\n</div></details>\n`;
         });
     }
-    return formatted;
+
+    return unmaskCode(processed);
 };
 
 export const attachDownloadButtons = (bubble, text) => {

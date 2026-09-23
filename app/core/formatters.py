@@ -8,9 +8,27 @@ def format_thought_blocks(text: str, is_streaming: bool = False) -> str:
     """
     Convert <thinking>...</thinking> (and legacy <thought>) blocks into collapsible <details> HTML elements.
     Supports unclosed streaming thought tags gracefully.
+    Masks code blocks and inline code spans to prevent quoted tags from prematurely closing blocks.
     """
     if not text:
         return ""
+
+    code_placeholders = []
+
+    def mask_code_block(match):
+        placeholder = f"___CODE_BLOCK_{len(code_placeholders)}___"
+        code_placeholders.append((placeholder, match.group(0)))
+        return placeholder
+
+    def mask_inline_code(match):
+        placeholder = f"___INLINE_CODE_{len(code_placeholders)}___"
+        code_placeholders.append((placeholder, match.group(0)))
+        return placeholder
+
+    # 1. Mask fenced multiline code blocks ```...```
+    masked_text = re.sub(r'```[\s\S]*?```', mask_code_block, text)
+    # 2. Mask inline code spans `...`
+    masked_text = re.sub(r'`[^`\n]+`', mask_inline_code, masked_text)
 
     def replace_closed_thought(match):
         content = match.group(2).strip()
@@ -24,15 +42,16 @@ def format_thought_blocks(text: str, is_streaming: bool = False) -> str:
         )
 
     # Match closed tags with backreference \1 to enforce matching opening and closing tag names
+    # Tolerates optional whitespace inside tags e.g. <thinking > or </thinking >
     formatted = re.sub(
-        r'<(thought|thinking|gedanken)>(.*?)</\1>',
+        r'<\s*(thought|thinking|gedanken)\s*>(.*?)<\s*/\s*\1\s*>',
         replace_closed_thought,
-        text,
+        masked_text,
         flags=re.DOTALL | re.IGNORECASE
     )
 
     # If streaming and an open tag exists without its matching closing tag
-    if is_streaming and re.search(r'<(thought|thinking|gedanken)>', formatted, flags=re.IGNORECASE):
+    if is_streaming and re.search(r'<\s*(thought|thinking|gedanken)\s*>', formatted, flags=re.IGNORECASE):
         def replace_open_thought(match):
             content = match.group(2).strip()
             return (
@@ -44,11 +63,15 @@ def format_thought_blocks(text: str, is_streaming: bool = False) -> str:
                 "</details>\n"
             )
         formatted = re.sub(
-            r'<(thought|thinking|gedanken)>(.*)$',
+            r'<\s*(thought|thinking|gedanken)\s*>(.*)$',
             replace_open_thought,
             formatted,
             flags=re.DOTALL | re.IGNORECASE
         )
+
+    # Restore placeholders
+    for placeholder, original in reversed(code_placeholders):
+        formatted = formatted.replace(placeholder, original)
 
     return formatted.strip()
 

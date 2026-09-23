@@ -23,6 +23,31 @@ def test_format_thought_blocks_streaming_open():
     assert "<summary>Gedankengang der KI...</summary>" in formatted
     assert "Thinking in progress..." in formatted
 
+def test_format_thought_blocks_with_quoted_tags():
+    raw = (
+        "<thinking>\n"
+        "Check: `<thinking>` and `</thinking>` tags at start.\n"
+        "Actual internal thought.\n"
+        "</thinking>\n"
+        "User answer."
+    )
+    formatted = format_thought_blocks(raw, is_streaming=False)
+    assert "<details class='ai-reasoning'>" in formatted
+    assert "`<thinking>` and `</thinking>` tags at start." in formatted
+    assert "Actual internal thought." in formatted
+    parts = formatted.split("</details>")
+    assert len(parts) == 2
+    assert "tags at start" not in parts[1]
+    assert parts[1].strip() == "User answer."
+
+def test_format_thought_blocks_whitespace_in_tag():
+    raw = "Start.\n<thinking >\nContent.\n</thinking >\nEnd."
+    formatted = format_thought_blocks(raw, is_streaming=False)
+    assert "<details class='ai-reasoning'>" in formatted
+    assert "Content." in formatted
+    assert "End." in formatted
+
+
 def test_format_local_links_data_and_uploads():
     username = "alice"
     session_id = "sess123"

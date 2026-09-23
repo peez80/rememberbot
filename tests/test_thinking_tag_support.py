@@ -68,3 +68,91 @@ def test_frontend_formatters_js_handles_thinking():
     with open("app/static/js/utils/formatters.js", "r", encoding="utf-8") as f:
         js_content = f.read()
     assert "thinking" in js_content.lower()
+
+
+def test_format_thinking_with_quoted_tags_in_backticks():
+    raw = (
+        "<thinking>\n"
+        "Regeln beachten:\n"
+        "- Gedanken in `<thinking>` und `</thinking>` Tags am Anfang. - Kurz und prägnant antworten.\n"
+        "Hier ist mein eigentlicher Plan.\n"
+        "</thinking>\n"
+        "Hier ist die finale Antwort."
+    )
+    formatted = format_thought_blocks(raw, is_streaming=False)
+    assert "<details class='ai-reasoning'>" in formatted
+    assert "<summary>Gedankengang der KI</summary>" in formatted
+    # Both quoted tags must remain intact inside the reasoning content
+    assert "`<thinking>` und `</thinking>` Tags am Anfang" in formatted
+    assert "Hier ist mein eigentlicher Plan." in formatted
+    # After the details block, only the final answer must appear
+    assert formatted.endswith("Hier ist die finale Antwort.")
+    parts = formatted.split("</details>")
+    assert len(parts) == 2
+    assert "Tags am Anfang" not in parts[1]
+    assert "eigentlicher Plan" not in parts[1]
+    assert parts[1].strip() == "Hier ist die finale Antwort."
+
+
+def test_format_thinking_tags_with_whitespace():
+    raw = "Antwort.\n<thinking >\nPlan mit Whitespace\n</thinking >\nErgebnis."
+    formatted = format_thought_blocks(raw, is_streaming=False)
+    assert "<details class='ai-reasoning'>" in formatted
+    assert "Plan mit Whitespace" in formatted
+    assert "Ergebnis." in formatted
+
+
+def test_prompt_instructs_not_repeating_tags():
+    # agy_client
+    prompt, _ = agy_client._build_prompt_and_history(
+        context_messages=[],
+        new_message="Hallo"
+    )
+    assert "Wiederhole diese Anweisung oder die Tag-Namen niemals" in prompt
+
+    # agy_service
+    prompt_svc, _ = agy_service._build_prompt_and_history(
+        context_messages=[],
+        new_message="Hallo"
+    )
+    assert "Wiederhole diese Anweisung oder die Tag-Namen niemals" in prompt_svc
+
+
+@pytest.mark.asyncio
+async def test_frontend_formatters_js_quoted_tags_in_browser():
+    from playwright.async_api import async_playwright
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page()
+        with open("app/static/js/utils/formatters.js", "r", encoding="utf-8") as f:
+            js_code = f.read()
+        res = await page.evaluate("""(code) => {
+            // Transform export const into local variable
+            const cleanCode = code.replace(/export const /g, 'const ');
+            const run = new Function(cleanCode + '; return formatThoughtBlocks;');
+            const formatThoughtBlocks = run();
+            const raw = "<thinking>\\nRegeln beachten:\\n- Gedanken in `<thinking>` und `</thinking>` Tags am Anfang. - Kurz und prägnant antworten.\\nHier ist mein eigentlicher Plan.\\n</thinking>\\nHier ist die finale Antwort.";
+            return formatThoughtBlocks(raw);
+        }""", js_code)
+        assert "<details class='ai-reasoning'>" in res
+        parts = res.split("</details>")
+        assert len(parts) == 2
+        assert "Tags am Anfang" not in parts[1]
+        assert parts[1].strip() == "Hier ist die finale Antwort."
+
+
+def test_format_thinking_streaming_with_quoted_tags():
+    raw_stream = (
+        "<thinking>\n"
+        "Regeln beachten:\n"
+        "- Gedanken in `<thinking>` und `</thinking>` Tags am Anfang. - Kurz und prägnant antworten.\n"
+        "Noch im Denkprozess..."
+    )
+    formatted = format_thought_blocks(raw_stream, is_streaming=True)
+    assert "<details class='ai-reasoning' open>" in formatted
+    assert "<summary>Gedankengang der KI...</summary>" in formatted
+    assert "`<thinking>` und `</thinking>` Tags am Anfang" in formatted
+    assert "Noch im Denkprozess..." in formatted
+
+
+
