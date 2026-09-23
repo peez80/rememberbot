@@ -11,6 +11,11 @@ def chat_service(tmp_path):
     session_svc = SessionService(storage_service=storage_svc)
     return ChatService(storage_service=storage_svc, session_service=session_svc)
 
+@pytest.fixture(autouse=True)
+def mock_generate_chat_icon():
+    with patch("app.services.chat_service.agy_client.generate_chat_icon", new_callable=AsyncMock) as mock_icon:
+        yield mock_icon
+
 @pytest.mark.asyncio
 async def test_chat_service_prepare_display_message(chat_service):
     # Text only
@@ -141,4 +146,55 @@ async def test_chat_service_fallback_when_db_missing(chat_service, caplog):
                 
                 saved_conv_id = await chat_service.session_service.get_session_conversation_id(username, session_id)
                 assert saved_conv_id == "conv-healed-888"
+
+
+@pytest.mark.asyncio
+async def test_chat_service_triggers_icon_after_stream_done(chat_service):
+    username = "alice"
+    session_id = await chat_service.session_service.create_session(username, "Kochen Chat")
+    
+    async def mock_stream(*args, **kwargs):
+        yield {"type": "delta", "text": "Leckere Pasta!"}
+        yield {"type": "done", "reply": "Leckere Pasta!"}
+        
+    with patch("app.services.chat_service.agy_client.stream_message", side_effect=mock_stream):
+        with patch("app.services.chat_service.agy_client.generate_chat_icon", new_callable=AsyncMock) as mock_icon:
+            generator = chat_service.stream_chat_generator(
+                username=username,
+                session_id=session_id,
+                message="Wie koche ich Pasta?"
+            )
+            events = [ev async for ev in generator]
+            assert len(events) == 2
+            
+            mock_icon.assert_called_once()
+            call_kwargs = mock_icon.call_args[1]
+            assert "Wie koche ich Pasta?" in call_kwargs.get("user_context", "")
+            assert "Leckere Pasta!" in call_kwargs.get("ai_context", "")
+
+
+@pytest.mark.asyncio
+async def test_chat_service_triggers_icon_after_process_chat(chat_service):
+    username = "bob"
+    session_id = await chat_service.session_service.create_session(username, "Reise Chat")
+    
+    with patch("app.services.chat_service.agy_client.process_message", new_callable=AsyncMock) as mock_proc:
+        mock_proc.return_value = {
+            "reply": "Reiseziele in Italien",
+            "context_truncated": False
+        }
+        with patch("app.services.chat_service.agy_client.generate_chat_icon", new_callable=AsyncMock) as mock_icon:
+            result = await chat_service.process_chat(
+                username=username,
+                session_id=session_id,
+                message="Wohin im Sommer verreisen?",
+                location="",
+                valid_uploads=[]
+            )
+            assert result["reply"] == "Reiseziele in Italien"
+            mock_icon.assert_called_once()
+            call_kwargs = mock_icon.call_args[1]
+            assert "Wohin im Sommer verreisen?" in call_kwargs.get("user_context", "")
+            assert "Reiseziele in Italien" in call_kwargs.get("ai_context", "")
+
 

@@ -106,8 +106,24 @@ async def get_history_endpoint(session_id: str, response: Response, username: st
     if storage_service.get_session_icon_path(username, session_id) is None:
         title = await session_service.get_session_title(username, session_id)
         if title and title != "Neuer Chat":
+            user_ctx = None
+            ai_ctx = None
+            for msg in (history or []):
+                is_user = msg.is_user if hasattr(msg, "is_user") else (msg.get("is_user") if isinstance(msg, dict) else False)
+                text = msg.text if hasattr(msg, "text") else (msg.get("text", "") if isinstance(msg, dict) else "")
+                if is_user and user_ctx is None:
+                    user_ctx = text
+                elif not is_user and ai_ctx is None:
+                    ai_ctx = text
+                if user_ctx and ai_ctx:
+                    break
             target_path = storage_service.get_session_icon_target_path(username, session_id)
-            fire_and_forget(agy_client.generate_chat_icon(title, target_path))
+            fire_and_forget(agy_client.generate_chat_icon(
+                title=title,
+                output_path=target_path,
+                user_context=user_ctx,
+                ai_context=ai_ctx
+            ))
 
     is_processing = supervisor.is_session_active(username, session_id)
     response.headers["X-Is-Processing"] = "true" if is_processing else "false"
@@ -199,7 +215,7 @@ async def update_title_endpoint(session_id: str, req: SessionTitleRequest, usern
     await _call_main_or_service("update_session_title", session_service.update_session_title, username, session_id, req.title)
     logger.info(f"User '{username}' updated title for session {session_id} to '{req.title}'")
     target_path = storage_service.get_session_icon_target_path(username, session_id)
-    
+
     # Try agy_client from main if patched
     agy_client_obj = agy_client
     try:
@@ -209,7 +225,30 @@ async def update_title_endpoint(session_id: str, req: SessionTitleRequest, usern
             agy_client_obj = main_mod.agy_client
     except Exception:
         pass
-    fire_and_forget(agy_client_obj.generate_chat_icon(req.title, target_path))
+
+    # Extract user and AI context from history if available
+    user_ctx = None
+    ai_ctx = None
+    try:
+        history = await _call_main_or_service("get_session_history", session_service.get_session_history, username, session_id)
+        for msg in (history or []):
+            is_user = msg.is_user if hasattr(msg, "is_user") else (msg.get("is_user") if isinstance(msg, dict) else False)
+            text = msg.text if hasattr(msg, "text") else (msg.get("text", "") if isinstance(msg, dict) else "")
+            if is_user and user_ctx is None:
+                user_ctx = text
+            elif not is_user and ai_ctx is None:
+                ai_ctx = text
+            if user_ctx and ai_ctx:
+                break
+    except Exception as e:
+        logger.warning(f"Could not load history for context during icon regeneration: {e}")
+
+    fire_and_forget(agy_client_obj.generate_chat_icon(
+        req.title,
+        target_path,
+        user_context=user_ctx,
+        ai_context=ai_ctx
+    ))
     return {"success": True}
 
 

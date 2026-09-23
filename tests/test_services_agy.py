@@ -27,21 +27,34 @@ async def test_agy_service_prune_history(agy_service):
     assert len(pruned) < len(messages)
 
 @pytest.mark.asyncio
+@pytest.mark.asyncio
 async def test_agy_service_generate_chat_icon(agy_service, tmp_path):
     target_path = str(tmp_path / "icon.svg")
     
     mock_process = AsyncMock()
-    mock_process.communicate.return_value = (b'<svg xmlns="http://www.w3.org/2000/svg"><circle/></svg>', b'')
+    mock_process.communicate.return_value = (b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40"/></svg>', b'')
     mock_process.returncode = 0
     
-    with patch("asyncio.create_subprocess_exec", return_value=mock_process):
-        await agy_service.generate_chat_icon("Meeting Notes", target_path)
+    with patch("asyncio.create_subprocess_exec", return_value=mock_process) as mock_exec:
+        await agy_service.generate_chat_icon(
+            title="Meeting Notes",
+            output_path=target_path,
+            user_context="Besprechung über Roadmap",
+            ai_context="Hier ist die Zusammenfassung der Meilensteine"
+        )
         
     import os
     assert os.path.exists(target_path)
     with open(target_path, "r", encoding="utf-8") as f:
         content = f.read()
-        assert "<svg" in content
+        assert "<circle" in content
+
+    mock_exec.assert_called_once()
+    called_cmd = mock_exec.call_args[0]
+    assert "--effort" in called_cmd
+    effort_idx = called_cmd.index("--effort")
+    assert called_cmd[effort_idx + 1] == "low"
+    assert "--disable-slash-commands" in called_cmd
 
 
 @pytest.mark.asyncio
@@ -66,6 +79,26 @@ async def test_agy_service_generate_chat_icon_timeout_uses_configured_constant(a
             assert call_kwargs.get("timeout") == ICON_GENERATION_TIMEOUT_SECONDS
             assert ICON_GENERATION_TIMEOUT_SECONDS == 180.0
             assert mock_process.kill.called
-            assert os.path.exists(target_path)
+            # No fallback file created on timeout
+            assert not os.path.exists(target_path)
             assert f"timed out after {ICON_GENERATION_TIMEOUT_SECONDS}s" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_agy_service_generate_chat_icon_failure_logs_stderr(agy_service, tmp_path, caplog):
+    import os
+    import logging
+
+    target_path = str(tmp_path / "icon.svg")
+    mock_process = AsyncMock()
+    mock_process.communicate.return_value = (b"", b"Fatal CLI error")
+    mock_process.returncode = 1
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+        with caplog.at_level(logging.ERROR):
+            await agy_service.generate_chat_icon("Meeting Notes", target_path)
+
+    assert not os.path.exists(target_path)
+    assert "Fatal CLI error" in caplog.text
+
 

@@ -597,7 +597,27 @@ document.addEventListener("DOMContentLoaded", () => {
                     }
 
                     const sessions = await api.getSessions();
+                    state.lastSessions = sessions;
                     sidebarView.renderSessionList(sessions, selectSession, deleteSessionPrompt);
+
+                    const curSess = sessions.find(s => s.id === submittedSessionId);
+                    if (curSess && !curSess.has_icon) {
+                        setTimeout(async () => {
+                            if (state.currentSessionId === submittedSessionId) {
+                                await loadSessions();
+                                const refreshedSession = state.lastSessions?.find(s => s.id === submittedSessionId);
+                                if (refreshedSession && refreshedSession.has_icon) {
+                                    const iconImg = document.getElementById('header-chat-icon');
+                                    const defaultIcon = document.getElementById('header-default-icon');
+                                    if (iconImg && defaultIcon) {
+                                        iconImg.src = `/api/sessions/${submittedSessionId}/icon?t=${Date.now()}`;
+                                        iconImg.style.display = 'block';
+                                        defaultIcon.style.display = 'none';
+                                    }
+                                }
+                            }
+                        }, 3000);
+                    }
                 }
 
             } catch (error) {

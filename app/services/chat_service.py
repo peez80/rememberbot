@@ -77,10 +77,6 @@ class ChatService:
             except Exception:
                 await self.session_service.update_session_title(username, session_id, auto_title)
 
-            target_path = self.storage_service.get_session_icon_target_path(username, session_id)
-            client_obj = self._get_agy_client()
-            fire_and_forget(client_obj.generate_chat_icon(auto_title, target_path))
-
     async def process_chat(
         self,
         username: str,
@@ -238,6 +234,17 @@ class ChatService:
                 await self.session_service.save_session_message(username, session_id, ai_msg_data)
         except Exception:
             await self.session_service.save_session_message(username, session_id, ai_msg_data)
+
+        if len(history) == 0:
+            target_path = self.storage_service.get_session_icon_target_path(username, session_id)
+            client_obj = self._get_agy_client()
+            title = await self.session_service.get_session_title(username, session_id)
+            fire_and_forget(client_obj.generate_chat_icon(
+                title=title or "Neuer Chat",
+                output_path=target_path,
+                user_context=message[:600],
+                ai_context=ai_reply[:600]
+            ))
 
         return {
             "reply": ai_reply,
@@ -420,6 +427,16 @@ class ChatService:
                             await self.session_service.save_session_message(username, session_id, ai_msg_data)
 
                         done_saved = True
+                        if is_first_message:
+                            target_path = self.storage_service.get_session_icon_target_path(username, session_id)
+                            icon_client = self._get_agy_client()
+                            title = await self.session_service.get_session_title(username, session_id)
+                            fire_and_forget(icon_client.generate_chat_icon(
+                                title=title or "Neuer Chat",
+                                output_path=target_path,
+                                user_context=message[:600],
+                                ai_context=final_reply[:600]
+                            ))
                         await queue.put({
                             "type": "done",
                             "reply": final_reply,
@@ -450,6 +467,17 @@ class ChatService:
                             await self.session_service.save_session_message(username, session_id, ai_msg_data)
                     except Exception:
                         await self.session_service.save_session_message(username, session_id, ai_msg_data)
+
+                    if is_first_message:
+                        target_path = self.storage_service.get_session_icon_target_path(username, session_id)
+                        icon_client = self._get_agy_client()
+                        title = await self.session_service.get_session_title(username, session_id)
+                        fire_and_forget(icon_client.generate_chat_icon(
+                            title=title or "Neuer Chat",
+                            output_path=target_path,
+                            user_context=message[:600],
+                            ai_context=final_reply[:600]
+                        ))
 
                     await queue.put({
                         "type": "done",

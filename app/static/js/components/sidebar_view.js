@@ -37,7 +37,7 @@ export const renderSessionList = (sessions, onSelectSession, onDeleteSession) =>
         }
 
         const iconHtml = session.has_icon 
-            ? `<img class="session-list-icon" src="/api/sessions/${session.id}/icon?t=${new Date(session.created_at || Date.now()).getTime()}">`
+            ? `<img class="session-list-icon" src="/api/sessions/${session.id}/icon?t=${Date.now()}">`
             : `<i class="ph-fill ph-robot session-list-icon"></i>`;
 
         div.innerHTML = `

@@ -427,30 +427,44 @@ class AGYService:
                 except OSError as e:
                     logger.warning(f"Failed to remove temp context file {history_file_path}: {e}")
 
-    async def generate_chat_icon(self, title: str, output_path: str):
-        def write_fallback():
-            try:
-                initials = "".join([w[0].upper() for w in title.split() if w])[:2]
-                if not initials:
-                    initials = "NC"
-                svg_content = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect x="0" y="0" width="100" height="100" rx="20" ry="20" fill="#10b981" />
-    <text x="50" y="50" fill="white" font-size="40" font-family="sans-serif" text-anchor="middle" dominant-baseline="central">{initials}</text>
-</svg>'''
-                with open(output_path, "w", encoding="utf-8") as f:
-                    f.write(sanitize_svg(svg_content))
-            except Exception as e:
-                logger.error(f"Failed to write fallback icon to {output_path}: {e}", exc_info=True)
+    async def generate_chat_icon(
+        self,
+        title: str,
+        output_path: str,
+        user_context: Optional[str] = None,
+        ai_context: Optional[str] = None
+    ):
+        context_parts = []
+        if title:
+            context_parts.append(f"Chat-Titel: {title}")
+        if user_context:
+            context_parts.append(f"Benutzeranfrage: {user_context[:600]}")
+        if ai_context:
+            context_parts.append(f"Antwort der KI: {ai_context[:600]}")
+        chat_context_str = "\n".join(context_parts) if context_parts else f"Chat-Titel: {title}"
 
         prompt = (
-            f"Generiere ein rechteckiges Avatar-Icon für einen Chat mit dem Titel '{title}'. "
-            "Der Stil soll technischer Natur sein (Technical Style). "
-            "Antworte AUSSCHLIESSLICH mit gültigem SVG-Code (beginnend mit <svg und endend mit </svg>). "
-            "Gib deiner Kreativität vollen Lauf! "
-            "Kein Markdown, keine Erklärungen, nur der rohe SVG Code."
+            "Erstelle ein modernes, minimalistisches App-Icon / Vektor-Piktogramm als SVG für eine Chat-Session.\n"
+            f"{chat_context_str}\n\n"
+            "Anforderungen:\n"
+            "1. Format & Struktur: Antworte AUSSCHLIESSLICH mit gültigem, wohlgeformtem SVG (beginnend mit <svg und endend mit </svg>).\n"
+            "   - viewBox=\"0 0 100 100\" width=\"100\" height=\"100\"\n"
+            "   - Hintergrund: Eine ansprechende abgerundete Kachel <rect width=\"100\" height=\"100\" rx=\"22\" fill=\"...\" />\n"
+            "   - Zentrum: Ein klares, zentriertes, kontrastreiches Vektorsymbol (z.B. Pfade, Kreise, Formen), das das Thema des Chats repräsentiert.\n"
+            "2. Optimierung für kleine UI (28x28px / 32x32px):\n"
+            "   - Halte die Formen klar, plakativ und leicht erkennbar (Apple/Google App-Icon-Stil).\n"
+            "   - Verwende harmonische, thematisch passende Farben (z.B. Kochen: warme Töne; Reise: Himmelblau/Teal; Finanzen: Smaragdgrün; Tech/Code: Indigo/Cyan; etc.).\n"
+            "   - KEIN Text, KEINE Buchstaben, KEINE winzigen unlesbaren Details, KEINE Fotorealistik.\n"
+            "3. Strikte Syntax: Reiner SVG-Code, keine Markdown-Fences, keine Erklärungen."
         )
 
-        cmd = [self.executable_path, "--dangerously-skip-permissions", "--prompt", prompt]
+        cmd = [
+            self.executable_path,
+            "--dangerously-skip-permissions",
+            "--effort", "low",
+            "--disable-slash-commands",
+            "--prompt", prompt
+        ]
 
         try:
             t_icon_start = time.perf_counter()
@@ -461,12 +475,11 @@ class AGYService:
                 stderr=asyncio.subprocess.PIPE
             )
             try:
-                stdout_bytes, _ = await asyncio.wait_for(process.communicate(), timeout=ICON_GENERATION_TIMEOUT_SECONDS)
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=ICON_GENERATION_TIMEOUT_SECONDS)
             except asyncio.TimeoutError:
                 process.kill()
-                stdout_bytes, _ = await process.communicate()
-                logger.warning(f"agy icon generation timed out after {ICON_GENERATION_TIMEOUT_SECONDS}s, using fallback.")
-                write_fallback()
+                stdout_bytes, stderr_bytes = await process.communicate()
+                logger.warning(f"agy icon generation timed out after {ICON_GENERATION_TIMEOUT_SECONDS}s.")
                 return
 
             t_icon_end = time.perf_counter()
@@ -474,7 +487,9 @@ class AGYService:
 
             if process.returncode == 0:
                 output = stdout_bytes.decode('utf-8', errors='replace').strip()
-                match = re.search(r'(<svg.*?</svg>)', output, re.DOTALL | re.IGNORECASE)
+                # Strip thinking/thought blocks before regex matching to prevent corrupt extractions
+                clean_output = re.sub(r'<\s*(thought|thinking)\b[^>]*>[\s\S]*?<\s*/\s*\1\s*>', '', output, flags=re.IGNORECASE)
+                match = re.search(r'(<svg.*?</svg>)', clean_output, re.DOTALL | re.IGNORECASE)
                 if match:
                     svg_code = sanitize_svg(match.group(1))
                     try:
@@ -483,13 +498,14 @@ class AGYService:
                         return
                     except Exception as e:
                         logger.error(f"Failed to save generated icon SVG to {output_path}: {e}", exc_info=True)
-                        write_fallback()
                         return
-            logger.warning(f"Failed to generate icon with agy, using fallback. Output was: {stdout_bytes}")
-            write_fallback()
+
+                logger.warning(f"Failed to extract valid SVG from agy output: {output[:300]}")
+            else:
+                err_msg = stderr_bytes.decode('utf-8', errors='replace').strip() if stderr_bytes else ""
+                logger.error(f"agy icon generation process failed with exit code {process.returncode}: {err_msg}")
         except Exception as e:
             logger.error(f"Error generating chat icon: {e}", exc_info=True)
-            write_fallback()
 
 
 # Global instance
