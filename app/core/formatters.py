@@ -1,6 +1,8 @@
+import os
 import re
 import urllib.parse
 import logging
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -76,9 +78,10 @@ def format_thought_blocks(text: str, is_streaming: bool = False) -> str:
     return formatted.strip()
 
 
-def format_local_links(text: str, username: str, session_id: str) -> str:
+def format_local_links(text: str, username: str, session_id: str, user_data_dir: Optional[str] = None) -> str:
     """
     Rewrite raw file and internal storage links to application download endpoints.
+    Optionally scans user_data_dir for mentioned existing files to auto-link them.
     """
     if not text:
         return ""
@@ -99,11 +102,43 @@ def format_local_links(text: str, username: str, session_id: str) -> str:
             encoded = urllib.parse.quote(rel_path, safe='/')
             return f"[{label}](/uploads/{session_id}/{encoded})"
         if not href.startswith(("http", "/", "data:", "#", "mailto:")):
-            encoded = urllib.parse.quote(href, safe='/')
+            clean_href = href[2:] if href.startswith("./") else href
+            encoded = urllib.parse.quote(clean_href, safe='/')
             return f"[{label}](/app/data/{username}/{session_id}/data/{encoded})"
         return match.group(0)
 
-    return re.sub(r'\[([^\]]+)\]\(([^)]+)\)', replace_local_links, text)
+    # 1. Transform markdown links [label](href)
+    formatted = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', replace_local_links, text)
+
+    # 2. Rewrite raw container storage paths (e.g. /app/data/{username}/sessions/{session_id}/data/...)
+    raw_storage_pattern = rf'(?:file://)?/app/data/{re.escape(username)}/sessions/{re.escape(session_id)}/data/([^\s"`\'<>()*\[\]]+)'
+    formatted = re.sub(raw_storage_pattern, rf'/app/data/{username}/{session_id}/data/\1', formatted)
+
+    # 3. Fallback auto-linking: If user_data_dir exists, find mentioned files that are not yet linked
+    if user_data_dir and os.path.isdir(user_data_dir):
+        try:
+            for entry in os.scandir(user_data_dir):
+                if entry.is_file():
+                    fname = entry.name
+                    # Ignore hidden files, temporary context files, or session internals
+                    if fname.startswith(".") or fname.startswith("chat_context_"):
+                        continue
+                    download_url = f"/app/data/{username}/{session_id}/data/{urllib.parse.quote(fname, safe='/')}"
+                    # If this file is not already linked with its download endpoint in the text
+                    if download_url not in formatted:
+                        # Check if file is mentioned as code `fname`
+                        code_pattern = rf'`{re.escape(fname)}`'
+                        if re.search(code_pattern, formatted):
+                            formatted = re.sub(code_pattern, f'[`{fname}`]({download_url})', formatted)
+                        else:
+                            # Plain text mention (word boundary)
+                            word_pattern = rf'(?<!/)(?<!\[)(?<!\()\b{re.escape(fname)}\b(?!\))(?![^<]*>)'
+                            if re.search(word_pattern, formatted):
+                                formatted = re.sub(word_pattern, f'[{fname}]({download_url})', formatted, count=1)
+        except Exception as e:
+            logger.warning(f"Error scanning user_data_dir '{user_data_dir}' for auto-linking files: {e}", exc_info=True)
+
+    return formatted
 
 
 def sanitize_svg(svg_content: str | bytes) -> str:

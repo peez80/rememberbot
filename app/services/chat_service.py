@@ -7,7 +7,7 @@ import time
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional, AsyncGenerator
+from typing import List, Dict, Any, Optional, AsyncGenerator, Tuple
 
 from app.core.formatters import format_thought_blocks, format_local_links
 from app.core.tasks import supervisor, fire_and_forget
@@ -53,6 +53,26 @@ class ChatService:
         except Exception:
             pass
         return agy_client
+
+    def _build_session_system_prompt(self, username: str, session_id: str, settings: dict, location: Optional[str] = None) -> Tuple[str, str]:
+        user_data_dir = os.path.abspath(os.path.join(self.storage_service.data_dir, username, "sessions", session_id, "data"))
+        os.makedirs(user_data_dir, exist_ok=True)
+
+        technical_prompt = (
+            f"TECHNISCHE VORAUSSETZUNG: Dein persistentes Datenverzeichnis lautet: {user_data_dir}\n"
+            "Speichere und lese generierte Dateien IMMER in diesem absoluten Verzeichnis. "
+            "Verwende in generierten Skripten (z.B. Python) zwingend diesen absoluten Pfad. "
+            "Erstelle für alle generierten Dateien einen Markdown-Link in der Antwort. "
+            "Nutze als Link-Ziel AUSSCHLIESSLICH den reinen Dateinamen ohne Pfade, z.B. [Dateiname.pdf](Dateiname.pdf)."
+        )
+
+        include_gps = settings.get("include_gps", False)
+        if include_gps and location:
+            technical_prompt += f"\n\nStandort des Nutzers: {location}"
+
+        session_prompt = settings.get("prompt", "")
+        combined_prompt = f"{technical_prompt}\n\n{session_prompt}".strip() if session_prompt else technical_prompt
+        return combined_prompt, user_data_dir
 
     async def _handle_first_message_title(self, username: str, session_id: str, is_first_message: bool, message: str, valid_uploads: list):
         if is_first_message:
@@ -168,17 +188,9 @@ class ChatService:
         except Exception:
             settings = await self.session_service.get_session_settings(username, session_id)
 
-        system_prompt = settings.get("prompt", "")
-        include_gps = settings.get("include_gps", False)
+        system_prompt, cwd = self._build_session_system_prompt(username, session_id, settings, location)
         model = settings.get("model")
         thinking_effort = settings.get("thinking_effort")
-
-        if include_gps and location:
-            loc_instruction = f"\nStandort des Nutzers: {location}"
-            system_prompt = f"{system_prompt}{loc_instruction}".strip() if system_prompt else loc_instruction.strip()
-
-        cwd = os.path.join(self.storage_service.data_dir, username, "sessions", session_id, "data")
-        os.makedirs(cwd, exist_ok=True)
 
         client_obj = self._get_agy_client()
         stored_conv_id = await self.session_service.get_session_conversation_id(username, session_id)
@@ -210,7 +222,7 @@ class ChatService:
             thinking_effort=thinking_effort
         )
 
-        ai_reply = format_local_links(result.get("reply", ""), username, session_id)
+        ai_reply = format_local_links(result.get("reply", ""), username, session_id, user_data_dir=cwd)
         context_truncated = result.get("context_truncated", False)
 
         ai_msg_data = {
@@ -342,17 +354,9 @@ class ChatService:
         except Exception:
             settings = await self.session_service.get_session_settings(username, session_id)
 
-        system_prompt = settings.get("prompt", "")
-        include_gps = settings.get("include_gps", False)
+        system_prompt, cwd = self._build_session_system_prompt(username, session_id, settings, location)
         model = settings.get("model")
         thinking_effort = settings.get("thinking_effort")
-
-        if include_gps and location:
-            loc_instruction = f"\nStandort des Nutzers: {location}"
-            system_prompt = f"{system_prompt}{loc_instruction}".strip() if system_prompt else loc_instruction.strip()
-
-        cwd = os.path.join(self.storage_service.data_dir, username, "sessions", session_id, "data")
-        os.makedirs(cwd, exist_ok=True)
 
         queue = asyncio.Queue()
         client_obj = self._get_agy_client()
@@ -403,7 +407,7 @@ class ChatService:
                         await queue.put({"type": "delta", "text": text_chunk})
                     elif event_type == "done":
                         raw_reply = event.get("reply", full_raw_reply)
-                        final_reply = format_local_links(raw_reply, username, session_id).strip()
+                        final_reply = format_local_links(raw_reply, username, session_id, user_data_dir=cwd).strip()
 
                         ai_msg_data = {
                             "text": final_reply,
@@ -446,7 +450,7 @@ class ChatService:
                         break
 
                 if not done_saved:
-                    final_reply = format_local_links(full_raw_reply, username, session_id).strip()
+                    final_reply = format_local_links(full_raw_reply, username, session_id, user_data_dir=cwd).strip()
                     ai_msg_data = {
                         "text": final_reply,
                         "is_user": False,

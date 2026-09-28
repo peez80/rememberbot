@@ -79,7 +79,7 @@ graph TD
 - **[`storage_service.py`](file:///apps/app/services/storage_service.py)**: Verantwortlich für atomare JSON-Schreibzugriffe (mit Temp-Files und `os.replace`), Dateisystem-Locks, On-Demand-Thumbnail-Erstellung und temporäre Bereinigungen.
 - **[`session_service.py`](file:///apps/app/services/session_service.py)**: Verwaltet Session-Lebenszyklen (CRUD), Einstellungs- und Titel-Updates, Historienverwaltung und ZipSlip-geschützte ZIP-Exporte/Importe mit automatischer URL- und Pfad-Remappung.
 - **[`agy_service.py`](file:///apps/app/services/agy_service.py)**: Kapselt die `agy`-CLI-Subprozess-Ausführung mit nativer Session-Fortführung (`--conversation <id>`), One-Time-History-Seeding bei bestehenden/importierten Sessions, DB-Prüfung (`conversation_exists`), dynamischer Parameterübergabe (`--model`, `--effort`), NDJSON-Stream-Parsing und SVG-Avatar-Generierung.
-- **[`chat_service.py`](file:///apps/app/services/chat_service.py)**: Orchestriert die Konversationslogik, Anhänge, GPS-Standorteinspeisung, Historienpersistierung und entkoppelte SSE-Token-Streams.
+- **[`chat_service.py`](file:///apps/app/services/chat_service.py)**: Orchestriert die Konversationslogik, Anhänge, GPS-Standorteinspeisung, Historienpersistierung, Einspeisung des `technical_prompt` für Workspace-Dateipfade (`/app/data/.../data`) und entkoppelte SSE-Token-Streams.
 
 ### 2.4 Router-Schicht (`app/routers/`)
 - **[`auth.py`](file:///apps/app/routers/auth.py)**: Endpunkte für Login, Logout und Authentifizierungsstatus (`/api/auth/*`).
