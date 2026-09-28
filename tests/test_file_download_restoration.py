@@ -45,7 +45,8 @@ async def test_chat_service_injects_technical_prompt_non_streaming(chat_service)
         expected_dir = os.path.abspath(os.path.join(chat_service.storage_service.data_dir, username, "sessions", session_id, "data"))
         assert expected_dir in system_prompt
         assert "Erstelle für alle generierten Dateien einen Markdown-Link in der Antwort." in system_prompt
-        assert "[Dateiname.pdf](Dateiname.pdf)" in system_prompt
+        assert "[datei.ext](datei.ext)" in system_prompt
+        assert "Dateiname.pdf" not in system_prompt
         
         # Verify reply was formatted with application download endpoint
         assert f"/app/data/{username}/{session_id}/data/test.csv" in result["reply"]
@@ -151,3 +152,63 @@ def test_format_local_links_auto_links_existing_files(tmp_path):
     # chat_context and hidden file should NOT be linked
     assert f"/app/data/{username}/{session_id}/data/chat_context_abcdef12.txt" not in result
     assert f"/app/data/{username}/{session_id}/data/.hidden_file" not in result
+
+def test_format_local_links_with_whitespace_between_brackets_and_parentheses():
+    username = "peez"
+    session_id = "0a1b70b006104e08ae18243fbacab197"
+    text = (
+        "in deiner Datei [diary_09-2026.json] "
+        f"(/app/data/{username}/sessions/{session_id}/data/diary_09-2026.json) eingetragen"
+    )
+    result = format_local_links(text, username, session_id)
+    # Must remove the whitespace between ] and ( and rewrite the path
+    expected = f"[diary_09-2026.json](/app/data/{username}/{session_id}/data/diary_09-2026.json)"
+    assert expected in result
+    assert "[diary_09-2026.json] (" not in result
+
+def test_format_local_links_relative_with_whitespace():
+    username = "peez"
+    session_id = "0a1b70b006104e08ae18243fbacab197"
+    text = "Hier ist [daten.csv] (daten.csv) und [bericht.pdf]  (./bericht.pdf)"
+    result = format_local_links(text, username, session_id)
+    assert f"[daten.csv](/app/data/{username}/{session_id}/data/daten.csv)" in result
+    assert f"[bericht.pdf](/app/data/{username}/{session_id}/data/bericht.pdf)" in result
+    assert "] (" not in result
+    assert "]  (" not in result
+
+def test_format_local_links_already_public_url_with_whitespace():
+    username = "peez"
+    session_id = "0a1b70b006104e08ae18243fbacab197"
+    text = f"Download: [diary_09-2026.json] (/app/data/{username}/{session_id}/data/diary_09-2026.json)"
+    result = format_local_links(text, username, session_id)
+    expected = f"[diary_09-2026.json](/app/data/{username}/{session_id}/data/diary_09-2026.json)"
+    assert expected in result
+    assert "] (" not in result
+
+def test_technical_prompt_warns_against_whitespace(chat_service):
+    prompt, _ = chat_service._build_session_system_prompt("alice", "sess_123", {})
+    assert "Setze kein Leerzeichen zwischen die eckigen und runden Klammern" in prompt or "WICHTIG: Setze NIEMALS ein Leerzeichen" in prompt
+
+def test_format_local_links_ignores_placeholder_filenames():
+    username = "peez"
+    session_id = "0a1b70b006104e08ae18243fbacab197"
+    text = (
+        "Hier ist deine Datei [tabelle.csv](tabelle.csv). "
+        "Beispiel: [Dateiname.pdf](Dateiname.pdf) oder [dateiname.ext](dateiname.ext) oder [filename.pdf](filename.pdf)."
+    )
+    result = format_local_links(text, username, session_id)
+    # Real file tabelle.csv must be rewritten to download URL
+    assert f"[tabelle.csv](/app/data/{username}/{session_id}/data/tabelle.csv)" in result
+    # Placeholders must NOT be rewritten to /app/data/... download URLs
+    assert f"/app/data/{username}/{session_id}/data/Dateiname.pdf" not in result
+    assert f"/app/data/{username}/{session_id}/data/dateiname.ext" not in result
+    assert f"/app/data/{username}/{session_id}/data/filename.pdf" not in result
+    assert "[Dateiname.pdf](Dateiname.pdf)" in result
+
+def test_technical_prompt_forbids_placeholders(chat_service):
+    prompt, _ = chat_service._build_session_system_prompt("alice", "sess_123", {})
+    assert "[Dateiname.pdf](Dateiname.pdf)" not in prompt
+    assert "Dateiname.pdf" not in prompt
+    assert "Gib niemals Platzhalter, Beispiele oder Formatierungshinweise in deiner Antwort an den Nutzer aus." in prompt
+
+

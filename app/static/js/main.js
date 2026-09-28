@@ -4,7 +4,7 @@
 
 import { state, setCurrentSessionId } from './state.js';
 import { isImageFile } from './utils/dom.js';
-import { formatThoughtBlocks, attachDownloadButtons } from './utils/formatters.js';
+import { formatThoughtBlocks, attachDownloadButtons, enhanceMarkdownLinksAndImages } from './utils/formatters.js';
 import * as api from './api/client.js';
 import { readSSEStream } from './api/sse.js';
 import * as sidebarView from './components/sidebar_view.js';
@@ -517,10 +517,7 @@ document.addEventListener("DOMContentLoaded", () => {
                                 if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
                                     const parsedHTML = marked.parse(formatted);
                                     textDiv.innerHTML = DOMPurify.sanitize(parsedHTML, { ADD_TAGS: ['details', 'summary'], ADD_ATTR: ['class', 'open'] });
-                                    textDiv.querySelectorAll("img").forEach(img => {
-                                        img.loading = "lazy";
-                                        img.decoding = "async";
-                                    });
+                                    enhanceMarkdownLinksAndImages(textDiv);
                                 } else {
                                     textDiv.textContent = formatted;
                                 }
@@ -543,10 +540,7 @@ document.addEventListener("DOMContentLoaded", () => {
                                     if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
                                         const parsedHTML = marked.parse(finalFormatted);
                                         textDiv.innerHTML = DOMPurify.sanitize(parsedHTML, { ADD_TAGS: ['details', 'summary'], ADD_ATTR: ['class', 'open'] });
-                                        textDiv.querySelectorAll("img").forEach(img => {
-                                            img.loading = "lazy";
-                                            img.decoding = "async";
-                                        });
+                                        enhanceMarkdownLinksAndImages(textDiv);
                                     } else {
                                         textDiv.textContent = finalFormatted;
                                     }

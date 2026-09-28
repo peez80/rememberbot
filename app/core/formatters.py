@@ -78,41 +78,69 @@ def format_thought_blocks(text: str, is_streaming: bool = False) -> str:
     return formatted.strip()
 
 
+def is_placeholder_filename(filename: str) -> bool:
+    if not filename:
+        return False
+    clean = filename.strip().lower()
+    base = os.path.basename(clean)
+    stem = os.path.splitext(base)[0]
+    placeholder_stems = {"dateiname", "filename", "beispiel", "example", "placeholder"}
+    placeholder_full = {"dateiname.pdf", "filename.pdf", "datei.ext", "dateiname.ext", "filename.ext"}
+    return base in placeholder_full or stem in placeholder_stems
+
+
 def format_local_links(text: str, username: str, session_id: str, user_data_dir: Optional[str] = None) -> str:
     """
     Rewrite raw file and internal storage links to application download endpoints.
     Optionally scans user_data_dir for mentioned existing files to auto-link them.
+    Ignores placeholder filenames from prompts or documentation (e.g. dateiname.pdf).
     """
     if not text:
         return ""
 
     def replace_local_links(match):
-        label = match.group(1)
-        href = match.group(2)
+        label = match.group(1).strip()
+        href = match.group(2).strip()
+        if is_placeholder_filename(href) or is_placeholder_filename(label):
+            return f"[{label}]({href})"
         if href.startswith("file://"):
             href = href[7:]
         data_prefix = f"/app/data/{username}/sessions/{session_id}/data/"
         uploads_prefix = f"/app/data/{username}/sessions/{session_id}/uploads/"
         if href.startswith(data_prefix):
             rel_path = href[len(data_prefix):]
+            if is_placeholder_filename(rel_path):
+                return f"[{label}]({rel_path})"
             encoded = urllib.parse.quote(rel_path, safe='/')
             return f"[{label}](/app/data/{username}/{session_id}/data/{encoded})"
         if href.startswith(uploads_prefix):
             rel_path = href[len(uploads_prefix):]
+            if is_placeholder_filename(rel_path):
+                return f"[{label}]({rel_path})"
             encoded = urllib.parse.quote(rel_path, safe='/')
             return f"[{label}](/uploads/{session_id}/{encoded})"
         if not href.startswith(("http", "/", "data:", "#", "mailto:")):
             clean_href = href[2:] if href.startswith("./") else href
+            if is_placeholder_filename(clean_href):
+                return f"[{label}]({href})"
             encoded = urllib.parse.quote(clean_href, safe='/')
             return f"[{label}](/app/data/{username}/{session_id}/data/{encoded})"
-        return match.group(0)
+        return f"[{label}]({href})"
 
-    # 1. Transform markdown links [label](href)
-    formatted = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', replace_local_links, text)
+    # 0. Pre-normalize markdown links with whitespace between brackets and parentheses
+    text = re.sub(r'\[([^\]]+)\]\s+\(([^)]+)\)', r'[\1](\2)', text)
+
+    # 1. Transform markdown links [label](href) (tolerating optional whitespace)
+    formatted = re.sub(r'\[([^\]]+)\]\s*\(([^)]+)\)', replace_local_links, text)
 
     # 2. Rewrite raw container storage paths (e.g. /app/data/{username}/sessions/{session_id}/data/...)
     raw_storage_pattern = rf'(?:file://)?/app/data/{re.escape(username)}/sessions/{re.escape(session_id)}/data/([^\s"`\'<>()*\[\]]+)'
-    formatted = re.sub(raw_storage_pattern, rf'/app/data/{username}/{session_id}/data/\1', formatted)
+    def replace_raw_storage(m):
+        raw_fname = m.group(1)
+        if is_placeholder_filename(raw_fname):
+            return m.group(0)
+        return rf'/app/data/{username}/{session_id}/data/{raw_fname}'
+    formatted = re.sub(raw_storage_pattern, replace_raw_storage, formatted)
 
     # 3. Fallback auto-linking: If user_data_dir exists, find mentioned files that are not yet linked
     if user_data_dir and os.path.isdir(user_data_dir):

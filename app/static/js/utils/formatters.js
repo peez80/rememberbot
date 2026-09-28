@@ -32,10 +32,11 @@ export const formatThoughtBlocks = (rawText, isStreaming = false) => {
     };
 
     const maskedText = maskCode(formatted);
+    const normalizedText = normalizeMarkdownLinks(maskedText);
 
     // Closed thought/thinking blocks with backreference \1 to ensure matching tags
     // Tolerates optional whitespace inside tags e.g. <thinking > or </thinking >
-    let processed = maskedText.replace(/<\s*(thought|thinking|gedanken)\s*>([\s\S]*?)<\s*\/\s*\1\s*>/gi, (match, tag, content) => {
+    let processed = normalizedText.replace(/<\s*(thought|thinking|gedanken)\s*>([\s\S]*?)<\s*\/\s*\1\s*>/gi, (match, tag, content) => {
         return `<details class='ai-reasoning'><summary>Gedankengang der KI</summary><div class='reasoning-content'>\n${content.trim()}\n</div></details>\n`;
     });
 
@@ -47,6 +48,39 @@ export const formatThoughtBlocks = (rawText, isStreaming = false) => {
     }
 
     return unmaskCode(processed);
+};
+
+export const isPlaceholderFilename = (fileName) => {
+    if (!fileName) return false;
+    const clean = fileName.trim().toLowerCase();
+    const stem = clean.substring(0, clean.lastIndexOf('.')) || clean;
+    const placeholderStems = new Set(["dateiname", "filename", "beispiel", "example", "placeholder"]);
+    const placeholderFull = new Set(["dateiname.pdf", "filename.pdf", "datei.ext", "dateiname.ext", "filename.ext"]);
+    return placeholderFull.has(clean) || placeholderStems.has(stem);
+};
+
+export const normalizeMarkdownLinks = (text) => {
+    if (!text) return "";
+    return text.replace(/\[([^\]]+)\]\s+\(([^)]+)\)/g, '[$1]($2)');
+};
+
+export const enhanceMarkdownLinksAndImages = (container) => {
+    if (!container) return;
+    container.querySelectorAll("img").forEach(img => {
+        img.loading = "lazy";
+        img.decoding = "async";
+    });
+    container.querySelectorAll("a").forEach(a => {
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        const href = a.getAttribute("href") || "";
+        if (href.startsWith("/app/data/") || href.startsWith("/uploads/")) {
+            const fname = decodeURIComponent(href.split("/").pop());
+            if (fname && !isPlaceholderFilename(fname)) {
+                a.setAttribute("download", fname);
+            }
+        }
+    });
 };
 
 export const attachDownloadButtons = (bubble, text) => {
@@ -74,10 +108,13 @@ export const attachDownloadButtons = (bubble, text) => {
         }
 
         uniqueLinks.forEach(linkPath => {
+            const fileName = decodeURIComponent(linkPath.split('/').pop());
+            if (isPlaceholderFilename(fileName)) {
+                return;
+            }
             const btn = document.createElement("a");
             btn.href = linkPath;
             btn.target = "_blank";
-            const fileName = decodeURIComponent(linkPath.split('/').pop());
             btn.download = fileName;
             btn.className = "download-btn";
             
@@ -100,10 +137,7 @@ export const renderMarkdownContent = (targetElement, text, isStreaming = false) 
             ADD_ATTR: ['class', 'open']
         });
         targetElement.className = "markdown-body";
-        targetElement.querySelectorAll("img").forEach(img => {
-            img.loading = "lazy";
-            img.decoding = "async";
-        });
+        enhanceMarkdownLinksAndImages(targetElement);
     } else {
         targetElement.textContent = formatted;
     }

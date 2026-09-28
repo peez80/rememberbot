@@ -3,7 +3,7 @@
  */
 
 import { getFileIconClass, formatFileSize } from '../utils/dom.js';
-import { formatThoughtBlocks, attachDownloadButtons } from '../utils/formatters.js';
+import { formatThoughtBlocks, attachDownloadButtons, enhanceMarkdownLinksAndImages } from '../utils/formatters.js';
 import { state } from '../state.js';
 
 export const getChatContainer = () => document.getElementById("chat-container");
@@ -91,10 +91,7 @@ export const createMessageElement = (text, isUser, imagesData = [], timestampStr
             const parsedHTML = marked.parse(formatted);
             textDiv.innerHTML = DOMPurify.sanitize(parsedHTML, { ADD_TAGS: ['details', 'summary'], ADD_ATTR: ['class', 'open'] });
             textDiv.className = "markdown-body";
-            textDiv.querySelectorAll("img").forEach(img => {
-                img.loading = "lazy";
-                img.decoding = "async";
-            });
+            enhanceMarkdownLinksAndImages(textDiv);
         } else {
             textDiv.textContent = formatted;
         }

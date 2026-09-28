@@ -63,7 +63,9 @@ class ChatService:
             "Speichere und lese generierte Dateien IMMER in diesem absoluten Verzeichnis. "
             "Verwende in generierten Skripten (z.B. Python) zwingend diesen absoluten Pfad. "
             "Erstelle für alle generierten Dateien einen Markdown-Link in der Antwort. "
-            "Nutze als Link-Ziel AUSSCHLIESSLICH den reinen Dateinamen ohne Pfade, z.B. [Dateiname.pdf](Dateiname.pdf)."
+            "Nutze als Link-Ziel AUSSCHLIESSLICH den reinen Dateinamen ohne Pfade (z.B. `[datei.ext](datei.ext)`). "
+            "Setze kein Leerzeichen zwischen die eckigen und runden Klammern. "
+            "Gib niemals Platzhalter, Beispiele oder Formatierungshinweise in deiner Antwort an den Nutzer aus."
         )
 
         include_gps = settings.get("include_gps", False)
