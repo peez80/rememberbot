@@ -23,9 +23,12 @@ class AGYService:
         self.executable_path = executable_path
 
     def conversation_exists(self, conv_id: Optional[str]) -> bool:
-        if not conv_id:
+        if not conv_id or not isinstance(conv_id, str):
             return False
-        path = os.path.expanduser(f"~/.gemini/antigravity-cli/conversations/{conv_id}.db")
+        if not re.match(r'^[a-zA-Z0-9_-]{1,64}$', conv_id):
+            return False
+        conversations_dir = os.path.expanduser("~/.gemini/antigravity-cli/conversations")
+        path = os.path.join(conversations_dir, f"{conv_id}.db")
         return os.path.isfile(path)
 
     def _build_prompt_and_history(

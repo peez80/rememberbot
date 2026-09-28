@@ -35,8 +35,9 @@ export const renderSessionList = (sessions, onSelectSession, onDeleteSession) =>
             dateStr = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         }
 
+        const safeSessionId = encodeURIComponent(session.id || '');
         const iconHtml = session.has_icon 
-            ? `<img class="session-list-icon" src="/api/sessions/${session.id}/icon?t=${Date.now()}">`
+            ? `<img class="session-list-icon" src="/api/sessions/${safeSessionId}/icon?t=${Date.now()}">`
             : `<i class="ph-fill ph-robot session-list-icon"></i>`;
 
         div.innerHTML = `

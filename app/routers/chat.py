@@ -6,7 +6,7 @@ from typing import List
 from fastapi import APIRouter, Request, Response, UploadFile, File, Form, HTTPException, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from app.core.config import MAX_UPLOADS_PER_MESSAGE
+from app.core.config import MAX_UPLOADS_PER_MESSAGE, is_safe_session_id
 from app.core.tasks import supervisor
 from app.services.auth_service import get_current_user
 from app.services.session_service import session_service
@@ -28,6 +28,10 @@ async def chat_endpoint(
     images: List[UploadFile] = File([]),
     username: str = Depends(get_current_user)
 ):
+    if not is_safe_session_id(session_id):
+        logger.warning(f"Invalid session_id in chat request: '{session_id}' by user '{username}'")
+        raise HTTPException(status_code=400, detail="Ungültige Sitzungs-ID")
+
     exists = await session_service.check_session_exists(username, session_id)
     if not exists:
         logger.warning(f"Chat request sent to non-existent session {session_id} by user '{username}'")

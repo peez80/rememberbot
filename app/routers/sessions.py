@@ -13,6 +13,7 @@ from app.core.config import (
     AGY_DEFAULT_THINKING_EFFORT,
     MODEL_CATALOG,
     validate_model_and_effort,
+    is_safe_session_id,
 )
 from app.models.chat import ChatMessage
 from app.models.session import (
@@ -55,6 +56,10 @@ async def get_models_catalog_endpoint():
 
 @router.get("/{session_id}/status")
 async def get_session_status_endpoint(session_id: str, username: str = Depends(get_current_user)):
+    if not is_safe_session_id(session_id):
+        logger.warning(f"Invalid session_id in status check: '{session_id}' by user '{username}'")
+        raise HTTPException(status_code=400, detail="Ungültige Sitzungs-ID")
+
     exists = await session_service.check_session_exists(username, session_id)
     if not exists:
         logger.warning(f"Status check for non-existent session {session_id} by user '{username}'")
@@ -66,6 +71,10 @@ async def get_session_status_endpoint(session_id: str, username: str = Depends(g
 
 @router.get("/{session_id}/history", response_model=List[ChatMessage])
 async def get_history_endpoint(session_id: str, response: Response, username: str = Depends(get_current_user)):
+    if not is_safe_session_id(session_id):
+        logger.warning(f"Invalid session_id in history check: '{session_id}' by user '{username}'")
+        raise HTTPException(status_code=400, detail="Ungültige Sitzungs-ID")
+
     exists = await session_service.check_session_exists(username, session_id)
     if not exists:
         logger.warning(f"History requested for non-existent session {session_id} by user '{username}'")
@@ -101,6 +110,10 @@ async def get_history_endpoint(session_id: str, response: Response, username: st
 
 @router.get("/{session_id}/icon")
 async def get_session_icon(session_id: str, username: str = Depends(get_current_user)):
+    if not is_safe_session_id(session_id):
+        logger.warning(f"Invalid session_id in icon check: '{session_id}' by user '{username}'")
+        raise HTTPException(status_code=400, detail="Ungültige Sitzungs-ID")
+
     icon_path = storage_service.get_session_icon_path(username, session_id)
     if icon_path and os.path.exists(icon_path):
         return FileResponse(
@@ -118,6 +131,10 @@ async def get_session_icon(session_id: str, username: str = Depends(get_current_
 
 @router.delete("/{session_id}")
 async def delete_session_endpoint(session_id: str, username: str = Depends(get_current_user)):
+    if not is_safe_session_id(session_id):
+        logger.warning(f"Invalid session_id in delete request: '{session_id}' by user '{username}'")
+        raise HTTPException(status_code=400, detail="Ungültige Sitzungs-ID")
+
     exists = await session_service.check_session_exists(username, session_id)
     if not exists:
         logger.warning(f"Delete requested for non-existent session {session_id} by user '{username}'")
@@ -130,6 +147,10 @@ async def delete_session_endpoint(session_id: str, username: str = Depends(get_c
 
 @router.get("/{session_id}/settings")
 async def get_settings_endpoint(session_id: str, username: str = Depends(get_current_user)):
+    if not is_safe_session_id(session_id):
+        logger.warning(f"Invalid session_id in settings check: '{session_id}' by user '{username}'")
+        raise HTTPException(status_code=400, detail="Ungültige Sitzungs-ID")
+
     exists = await session_service.check_session_exists(username, session_id)
     if not exists:
         logger.warning(f"Settings requested for non-existent session {session_id} by user '{username}'")
@@ -140,6 +161,10 @@ async def get_settings_endpoint(session_id: str, username: str = Depends(get_cur
 
 @router.put("/{session_id}/settings")
 async def update_settings_endpoint(session_id: str, req: SessionSettingsRequest, username: str = Depends(get_current_user)):
+    if not is_safe_session_id(session_id):
+        logger.warning(f"Invalid session_id in settings update: '{session_id}' by user '{username}'")
+        raise HTTPException(status_code=400, detail="Ungültige Sitzungs-ID")
+
     exists = await session_service.check_session_exists(username, session_id)
     if not exists:
         logger.warning(f"Settings update requested for non-existent session {session_id} by user '{username}'")
@@ -172,6 +197,10 @@ async def update_settings_endpoint(session_id: str, req: SessionSettingsRequest,
 
 @router.put("/{session_id}/title")
 async def update_title_endpoint(session_id: str, req: SessionTitleRequest, username: str = Depends(get_current_user)):
+    if not is_safe_session_id(session_id):
+        logger.warning(f"Invalid session_id in title update: '{session_id}' by user '{username}'")
+        raise HTTPException(status_code=400, detail="Ungültige Sitzungs-ID")
+
     exists = await session_service.check_session_exists(username, session_id)
     if not exists:
         logger.warning(f"Title update requested for non-existent session {session_id} by user '{username}'")
@@ -209,6 +238,10 @@ async def update_title_endpoint(session_id: str, req: SessionTitleRequest, usern
 
 @router.get("/{session_id}/export")
 async def export_session_endpoint(session_id: str, username: str = Depends(get_current_user)):
+    if not is_safe_session_id(session_id):
+        logger.warning(f"Invalid session_id in export request: '{session_id}' by user '{username}'")
+        raise HTTPException(status_code=400, detail="Ungültige Sitzungs-ID")
+
     exists = await session_service.check_session_exists(username, session_id)
     if not exists:
         logger.warning(f"Export requested for non-existent session {session_id} by user '{username}'")
@@ -239,6 +272,10 @@ async def export_session_endpoint(session_id: str, username: str = Depends(get_c
 
 @router.post("/{session_id}/import", response_model=SessionImportResponse)
 async def import_session_endpoint(session_id: str, file: UploadFile = File(...), username: str = Depends(get_current_user)):
+    if not is_safe_session_id(session_id):
+        logger.warning(f"Invalid session_id in import request: '{session_id}' by user '{username}'")
+        raise HTTPException(status_code=400, detail="Ungültige Sitzungs-ID")
+
     exists = await session_service.check_session_exists(username, session_id)
     if not exists:
         logger.warning(f"Import requested for non-existent session {session_id} by user '{username}'")
@@ -249,14 +286,21 @@ async def import_session_endpoint(session_id: str, file: UploadFile = File(...),
         raise HTTPException(status_code=400, detail="Session wird gerade verarbeitet")
 
     try:
-        zip_bytes = await file.read()
+        # Bounded streaming read in 64KB chunks to prevent unbounded memory allocation
+        CHUNK_SIZE = 64 * 1024
+        total_read = 0
+        chunks = []
+        while chunk := await file.read(CHUNK_SIZE):
+            total_read += len(chunk)
+            if total_read > MAX_ZIP_UPLOAD_SIZE:
+                logger.warning(f"Rejected import: archive exceeds limit for session {session_id} (user '{username}')")
+                raise HTTPException(status_code=413, detail="ZIP-Archiv ist zu groß (maximal 500 MB erlaubt)")
+            chunks.append(chunk)
+
+        zip_bytes = b"".join(chunks)
         if not zip_bytes:
             logger.warning(f"Empty file uploaded for import in session {session_id} by user '{username}'")
             raise HTTPException(status_code=400, detail="Leere Datei hochgeladen")
-
-        if len(zip_bytes) > MAX_ZIP_UPLOAD_SIZE:
-            logger.warning(f"Rejected import: archive exceeds limit for session {session_id} (user '{username}')")
-            raise HTTPException(status_code=413, detail="ZIP-Archiv ist zu groß (maximal 500 MB erlaubt)")
 
         result = await session_service.import_session_archive(username, session_id, zip_bytes)
         logger.info(f"User '{username}' imported session archive into session {session_id}")

@@ -6,6 +6,13 @@ import { getFileIconClass, formatFileSize } from '../utils/dom.js';
 import { formatThoughtBlocks, attachDownloadButtons, enhanceMarkdownLinksAndImages } from '../utils/formatters.js';
 import { state } from '../state.js';
 
+export const isSafeUrl = (url) => {
+    if (!url || typeof url !== 'string') return false;
+    const trimmed = url.trim().toLowerCase();
+    return (trimmed.startsWith('/') && !trimmed.startsWith('//')) ||
+           trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('blob:');
+};
+
 export const getChatContainer = () => document.getElementById("chat-container");
 export const getScrollToBottomBtn = () => document.getElementById("scroll-to-bottom-btn");
 
@@ -127,7 +134,7 @@ export const createMessageElement = (text, isUser, imagesData = [], timestampStr
             }
             
             const link = document.createElement("a");
-            link.href = originalUrl;
+            link.href = isSafeUrl(originalUrl) ? originalUrl : '#';
             link.target = "_blank";
             link.rel = "noopener noreferrer";
             link.className = "chat-image-link";
@@ -176,7 +183,7 @@ export const createMessageElement = (text, isUser, imagesData = [], timestampStr
         nonImageFiles.forEach(f => {
             const card = document.createElement("a");
             card.className = "chat-attachment-item";
-            card.href = f.url || "#";
+            card.href = isSafeUrl(f.url) ? f.url : "#";
             card.target = "_blank";
             card.rel = "noopener noreferrer";
             card.title = `${f.name || 'Datei'} herunterladen`;

@@ -122,8 +122,11 @@ Das Frontend verzichtet auf schwere Frameworks und Build-Tools und setzt auf mod
 
 1. **Zero Silent Failures**: Jeder Ausnahmefall wird mit strukturiertem Kontext und Traceback protokolliert.
 2. **Hintergrund-Absicherung**: SSE-Streams und Hintergrundaufgaben laufen bei Verbindungsabbrüchen via `asyncio.shield` und `BackgroundSupervisor` fehlerfrei bis zur Persistierung durch.
-3. **ZipSlip-Schutz**: ZIP-Importe weisen bösartige Pfade (`..` oder absolute Pfade) strikt ab.
-4. **XSS- & SVG-Sanitization**: Vollständige Bereinigung über DOMPurify im Frontend und `defusedxml`/Regex-Prüfung im Backend.
+3. **ZipSlip- & Zip-Bomb-Schutz**: ZIP-Importe weisen bösartige Pfade (`..` oder absolute Pfade) strikt ab und begrenzen das dekomprimierte Gesamtvolumen (max. 150 MB), um Archiv-Dekompressionsexplosionen (Zip Bombs) zu verhindern. Import-Uploads werden im Router speicherschonend gestreamt (Chunked Reading, max. 50 MB) zur Vermeidung von OOM-DoS.
+4. **Session-ID Strict Validation**: Alle API-Routen, Storage-Funktionen und `agy`-Prüfungen validieren Session-IDs strikt gegen ein Regex-Muster (`^[a-zA-Z0-9_-]{1,64}$`), wodurch Path Traversal und Subdirectory-Injection vollständig ausgeschlossen sind.
+5. **Defense-in-Depth File & Thumbnail Serving**: Alle Datei-Auslieferungen (`/uploads/*`, `/uploads/*/thumbnails/*`, `/app/data/*`) erzwingen restriktive HTTP-Security-Header (`Content-Security-Policy: default-src 'none'; sandbox` und `X-Content-Type-Options: nosniff`), um XSS durch manipulierte SVG-, HTML- oder Bilddateien zu unterbinden.
+6. **XSS- & SVG-Sanitization**: Vollständige Bereinigung über DOMPurify mit Subresource Integrity (SRI) im Frontend, sichere URL-Schema-Validierung gegen `javascript:`-Links und serverseitige SVG-Prüfung (`defusedxml`/Regex).
+7. **Timing-Attack-Schutz**: Benutzerpasswörter werden mittels `secrets.compare_digest` mit konstanter Ausführungszeit abgeglichen.
 
 ---
 

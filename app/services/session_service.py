@@ -16,6 +16,7 @@ from app.core.config import (
     MAX_ZIP_FILES_COUNT,
     MAX_ZIP_UNCOMPRESSED_BYTES,
     resolve_session_model_and_effort,
+    is_safe_session_id,
 )
 from app.core.formatters import sanitize_svg
 from app.services.storage_service import StorageService, storage_service as default_storage_service
@@ -234,6 +235,9 @@ class SessionService:
 
 
     def _sync_delete_session(self, username: str, session_id: str):
+        if not is_safe_session_id(session_id):
+            logger.warning(f"Refusing to delete session with unsafe session_id '{session_id}' for user '{username}'")
+            return
         filepath = self.storage.get_session_filepath(username, session_id)
         session_dir = os.path.dirname(filepath)
         if os.path.exists(session_dir):
@@ -432,6 +436,16 @@ class SessionService:
 
                 old_session_id = old_session_data.get("id", "")
 
+                extracted_uncompressed_bytes = 0
+
+                def _is_safe_history_url(url_val: str) -> bool:
+                    if not url_val or not isinstance(url_val, str):
+                        return False
+                    lower = url_val.strip().lower()
+                    if lower.startswith("javascript:") or lower.startswith("vbscript:") or lower.startswith("data:text/html"):
+                        return False
+                    return True
+
                 for info in infolist:
                     if info.is_dir():
                         continue
@@ -448,8 +462,12 @@ class SessionService:
                             dest_path = os.path.abspath(os.path.join(target_uploads_dir, clean_sub))
                             if dest_path.startswith(os.path.abspath(target_uploads_dir) + os.sep) or dest_path == os.path.abspath(target_uploads_dir):
                                 os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                                with open(dest_path, "wb") as f_out:
-                                    f_out.write(zf.read(info))
+                                with zf.open(info) as src, open(dest_path, "wb") as dst:
+                                    while chunk := src.read(64 * 1024):
+                                        extracted_uncompressed_bytes += len(chunk)
+                                        if extracted_uncompressed_bytes > MAX_ZIP_UNCOMPRESSED_BYTES:
+                                            raise ValueError(f"Gesamtgröße der entpackten Dateien überschreitet das Limit von {MAX_ZIP_UNCOMPRESSED_BYTES // (1024*1024)} MB")
+                                        dst.write(chunk)
                             else:
                                 raise ValueError(f"Ungültiger Pfad im ZIP-Archiv: {info.filename}")
                     elif rel_name.startswith("data/"):
@@ -459,13 +477,21 @@ class SessionService:
                             dest_path = os.path.abspath(os.path.join(target_data_dir, clean_sub))
                             if dest_path.startswith(os.path.abspath(target_data_dir) + os.sep) or dest_path == os.path.abspath(target_data_dir):
                                 os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                                with open(dest_path, "wb") as f_out:
-                                    f_out.write(zf.read(info))
+                                with zf.open(info) as src, open(dest_path, "wb") as dst:
+                                    while chunk := src.read(64 * 1024):
+                                        extracted_uncompressed_bytes += len(chunk)
+                                        if extracted_uncompressed_bytes > MAX_ZIP_UNCOMPRESSED_BYTES:
+                                            raise ValueError(f"Gesamtgröße der entpackten Dateien überschreitet das Limit von {MAX_ZIP_UNCOMPRESSED_BYTES // (1024*1024)} MB")
+                                        dst.write(chunk)
                             else:
                                 raise ValueError(f"Ungültiger Pfad im ZIP-Archiv: {info.filename}")
                     elif rel_name == "icon.svg":
                         dest_path = os.path.join(target_dir, "icon.svg")
-                        clean_svg_str = sanitize_svg(zf.read(info))
+                        raw_svg = zf.read(info)
+                        extracted_uncompressed_bytes += len(raw_svg)
+                        if extracted_uncompressed_bytes > MAX_ZIP_UNCOMPRESSED_BYTES:
+                            raise ValueError(f"Gesamtgröße der entpackten Dateien überschreitet das Limit von {MAX_ZIP_UNCOMPRESSED_BYTES // (1024*1024)} MB")
+                        clean_svg_str = sanitize_svg(raw_svg)
                         with open(dest_path, "w", encoding="utf-8") as f_out:
                             f_out.write(clean_svg_str)
 
@@ -491,6 +517,8 @@ class SessionService:
                                 if old_session_id:
                                     u = u.replace(f"/uploads/{old_session_id}/", f"/uploads/{safe_target_id}/")
                                 u = re.sub(r'/uploads/[a-zA-Z0-9_-]+/', f'/uploads/{safe_target_id}/', u)
+                                if not _is_safe_history_url(u):
+                                    u = "#"
                             new_img_urls.append(u)
                         msg_copy["image_urls"] = new_img_urls
 
@@ -504,6 +532,8 @@ class SessionService:
                                     if old_session_id:
                                         u = u.replace(f"/uploads/{old_session_id}/", f"/uploads/{safe_target_id}/")
                                     u = re.sub(r'/uploads/[a-zA-Z0-9_-]+/', f'/uploads/{safe_target_id}/', u)
+                                    if not _is_safe_history_url(u):
+                                        u = "#"
                                     img_dict["url"] = u
                                 new_images.append(img_dict)
                             elif isinstance(img, str):
@@ -511,6 +541,8 @@ class SessionService:
                                 if old_session_id:
                                     u = u.replace(f"/uploads/{old_session_id}/", f"/uploads/{safe_target_id}/")
                                 u = re.sub(r'/uploads/[a-zA-Z0-9_-]+/', f'/uploads/{safe_target_id}/', u)
+                                if not _is_safe_history_url(u):
+                                    u = "#"
                                 new_images.append(u)
                         msg_copy["images"] = new_images
 
@@ -528,6 +560,8 @@ class SessionService:
                                     if old_session_id:
                                         u = u.replace(f"/uploads/{old_session_id}/", f"/uploads/{safe_target_id}/")
                                     u = re.sub(r'/uploads/[a-zA-Z0-9_-]+/', f'/uploads/{safe_target_id}/', u)
+                                    if not _is_safe_history_url(u):
+                                        u = "#"
                                     f_dict["url"] = u
 
                                 if fname:

@@ -1,4 +1,5 @@
 import os
+import re
 
 # Base persistence directory
 DATA_DIR = os.getenv("DATA_DIR", os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data"))
@@ -135,3 +136,18 @@ def resolve_session_model_and_effort(model: str | None, thinking_effort: str | N
     if default_eff in allowed_efforts:
         return eff_model, default_eff
     return eff_model, allowed_efforts[0] if allowed_efforts else None
+
+
+# Validation pattern for session IDs: alphanumeric, underscores, and hyphens (1-64 chars)
+SESSION_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
+
+def is_safe_session_id(session_id: str | None) -> bool:
+    """
+    Validates that a session_id is a non-empty string consisting only of
+    alphanumeric characters, underscores, and hyphens (up to 64 chars),
+    and is not a directory traversal token like '.' or '..'.
+    """
+    if not session_id or not isinstance(session_id, str):
+        return False
+    return bool(SESSION_ID_PATTERN.match(session_id)) and session_id not in (".", "..")
+

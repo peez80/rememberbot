@@ -2,6 +2,7 @@ import os
 import json
 import time
 import uuid
+import secrets
 import logging
 from collections import defaultdict
 from typing import Dict, Any, Optional
@@ -13,6 +14,7 @@ from app.core.config import (
     MAX_LOGIN_ATTEMPTS,
     LOGIN_RATE_WINDOW_SECONDS,
     SESSION_MAX_AGE_SECONDS,
+    SESSION_COOKIE_NAME,
 )
 
 logger = logging.getLogger(__name__)
@@ -102,10 +104,12 @@ class AuthService:
 
     def authenticate(self, username: str, password: str) -> bool:
         users = self.get_valid_users()
-        return username in users and users[username] == password
+        if username not in users:
+            return False
+        return secrets.compare_digest(users[username], password)
 
     def create_session(self, username: str) -> str:
-        session_token = uuid.uuid4().hex
+        session_token = secrets.token_hex(32)
         now = time.time()
         session_dict = self.current_sessions
         session_dict[session_token] = {
@@ -145,7 +149,7 @@ class AuthService:
         return None
 
     def get_current_user(self, request: Request) -> str:
-        session_token = request.cookies.get("session_token")
+        session_token = request.cookies.get(SESSION_COOKIE_NAME)
         username = self.verify_session(session_token)
         if not username:
             raise HTTPException(status_code=401, detail="Not authenticated")
