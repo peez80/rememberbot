@@ -5,7 +5,7 @@ import base64
 import pytest
 from PIL import Image
 from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 from app.main import app
 from app.agy_client import AgyClient
@@ -32,13 +32,13 @@ def run_around_tests():
     clear_mock_auth()
 
 
-@patch("app.main.agy_client")
-@patch("app.main.get_session_history")
-@patch("app.main.save_session_message")
-@patch("app.main.get_session_title")
-@patch("app.main.check_session_exists")
-@patch("app.main.update_session_title")
-@patch("app.main.get_session_settings")
+@patch("app.services.chat_service.chat_service.agy_service")
+@patch("app.services.session_service.session_service.get_session_history", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.save_session_message", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_title", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.check_session_exists", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.update_session_title", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_settings", new_callable=AsyncMock)
 def test_upload_single_document_file(mock_get_settings, mock_update_title, mock_exists, mock_title, mock_save_msg, mock_get_history, mock_agy_client, tmp_path):
     mock_get_history.return_value = []
     mock_get_settings.return_value = {"prompt": "System prompt", "include_gps": False}
@@ -61,7 +61,7 @@ def test_upload_single_document_file(mock_get_settings, mock_update_title, mock_
     files = [("files", ("Finanzbericht.pdf", pdf_bytes, "application/pdf"))]
     data = {"message": "Analysiere diesen Bericht"}
     
-    with patch("app.main.DATA_DIR", str(tmp_path)):
+    with patch("app.services.storage_service.storage_service.data_dir", str(tmp_path)):
         response = client.post("/api/sessions/sess-doc-123/chat", data=data, files=files)
         
         assert response.status_code == 200
@@ -91,13 +91,13 @@ def test_upload_single_document_file(mock_get_settings, mock_update_title, mock_
         assert saved_files[0].read_bytes() == pdf_bytes
 
 
-@patch("app.main.agy_client")
-@patch("app.main.get_session_history")
-@patch("app.main.save_session_message")
-@patch("app.main.get_session_title")
-@patch("app.main.check_session_exists")
-@patch("app.main.update_session_title")
-@patch("app.main.get_session_settings")
+@patch("app.services.chat_service.chat_service.agy_service")
+@patch("app.services.session_service.session_service.get_session_history", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.save_session_message", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_title", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.check_session_exists", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.update_session_title", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_settings", new_callable=AsyncMock)
 def test_mixed_image_and_document_upload(mock_get_settings, mock_update_title, mock_exists, mock_title, mock_save_msg, mock_get_history, mock_agy_client, tmp_path):
     mock_get_history.return_value = []
     mock_get_settings.return_value = {"prompt": "", "include_gps": False}
@@ -121,7 +121,7 @@ def test_mixed_image_and_document_upload(mock_get_settings, mock_update_title, m
     ]
     data = {"message": "Hier sind Diagramm und Daten"}
     
-    with patch("app.main.DATA_DIR", str(tmp_path)):
+    with patch("app.services.storage_service.storage_service.data_dir", str(tmp_path)):
         response = client.post("/api/sessions/sess-mix-123/chat", data=data, files=files)
         assert response.status_code == 200
         
@@ -147,14 +147,14 @@ def test_mixed_image_and_document_upload(mock_get_settings, mock_update_title, m
         assert doc_meta["is_image"] is False
 
 
-@patch("app.main.check_session_exists")
+@patch("app.services.session_service.session_service.check_session_exists", new_callable=AsyncMock)
 def test_upload_file_limit_exceeded(mock_exists, tmp_path):
     mock_exists.return_value = True
     
     # 11 files (max allowed is 10)
     files = [("files", (f"file_{i}.txt", b"test", "text/plain")) for i in range(11)]
     
-    with patch("app.main.DATA_DIR", str(tmp_path)):
+    with patch("app.services.storage_service.storage_service.data_dir", str(tmp_path)):
         response = client.post("/api/sessions/sess-limit-123/chat", data={"message": "Zu viele Dateien"}, files=files)
         assert response.status_code == 400
         assert "Maximal 10 Dateien erlaubt" in response.json().get("error", "")
@@ -200,7 +200,7 @@ def test_download_non_image_upload_with_content_disposition(tmp_path):
     file_path = uploads_dir / filename
     file_path.write_bytes(csv_content)
     
-    with patch("app.main.DATA_DIR", str(tmp_path)):
+    with patch("app.services.storage_service.storage_service.data_dir", str(tmp_path)):
         response = client.get(f"/uploads/{session_id}/{filename}")
         assert response.status_code == 200
         assert response.content == csv_content
@@ -210,13 +210,13 @@ def test_download_non_image_upload_with_content_disposition(tmp_path):
         assert "Datenbericht.csv" in disposition or filename in disposition
 
 
-@patch("app.main.agy_client")
-@patch("app.main.get_session_history")
-@patch("app.main.save_session_message")
-@patch("app.main.get_session_title")
-@patch("app.main.check_session_exists")
-@patch("app.main.update_session_title")
-@patch("app.main.get_session_settings")
+@patch("app.services.chat_service.chat_service.agy_service")
+@patch("app.services.session_service.session_service.get_session_history", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.save_session_message", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_title", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.check_session_exists", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.update_session_title", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_settings", new_callable=AsyncMock)
 def test_upload_logging(mock_get_settings, mock_update_title, mock_exists, mock_title, mock_save_msg, mock_get_history, mock_agy_client, tmp_path, caplog):
     mock_get_history.return_value = []
     mock_get_settings.return_value = {"prompt": "", "include_gps": False}
@@ -235,7 +235,7 @@ def test_upload_logging(mock_get_settings, mock_update_title, mock_exists, mock_
     
     import logging
     with caplog.at_level(logging.INFO):
-        with patch("app.main.DATA_DIR", str(tmp_path)):
+        with patch("app.services.storage_service.storage_service.data_dir", str(tmp_path)):
             response = client.post("/api/sessions/sess-log-123/chat", data={"message": "Logging test"}, files=files)
             assert response.status_code == 200
             
@@ -244,13 +244,13 @@ def test_upload_logging(mock_get_settings, mock_update_title, mock_exists, mock_
     assert any("sess-log-123" in msg or "testuser" in msg or "file" in msg.lower() for msg in log_messages)
 
 
-@patch("app.main.agy_client")
-@patch("app.main.get_session_history")
-@patch("app.main.save_session_message")
-@patch("app.main.get_session_title")
-@patch("app.main.check_session_exists")
-@patch("app.main.update_session_title")
-@patch("app.main.get_session_settings")
+@patch("app.services.chat_service.chat_service.agy_service")
+@patch("app.services.session_service.session_service.get_session_history", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.save_session_message", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_title", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.check_session_exists", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.update_session_title", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_settings", new_callable=AsyncMock)
 def test_single_image_upload_not_duplicated(mock_get_settings, mock_update_title, mock_exists, mock_title, mock_save_msg, mock_get_history, mock_agy_client, tmp_path):
     mock_get_history.return_value = []
     mock_get_settings.return_value = {"prompt": "", "include_gps": False}
@@ -269,7 +269,7 @@ def test_single_image_upload_not_duplicated(mock_get_settings, mock_update_title
     files = [("files", ("single_photo.png", png_bytes, "image/png"))]
     data = {"message": "Schau dir dieses Foto an"}
 
-    with patch("app.main.DATA_DIR", str(tmp_path)):
+    with patch("app.services.storage_service.storage_service.data_dir", str(tmp_path)):
         response = client.post("/api/sessions/sess-single-img-123/chat", data=data, files=files)
         assert response.status_code == 200
 

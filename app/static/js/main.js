@@ -4,7 +4,6 @@
 
 import { state, setCurrentSessionId } from './state.js';
 import { isImageFile } from './utils/dom.js';
-import { formatThoughtBlocks, attachDownloadButtons, enhanceMarkdownLinksAndImages } from './utils/formatters.js';
 import * as api from './api/client.js';
 import { readSSEStream } from './api/sse.js';
 import * as sidebarView from './components/sidebar_view.js';
@@ -491,60 +490,26 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 if (contentType.includes("text/event-stream")) {
                     let accumulatedText = "";
-                    let aiMsgDiv = null;
-                    let textDiv = null;
-                    let bubbleDiv = null;
+                    let streamController = null;
 
                     await readSSEStream(response, {
                         onDelta: (event) => {
                             if (state.currentSessionId === submittedSessionId) {
-                                chatView.removeTypingIndicator();
-                                if (!aiMsgDiv) {
-                                    aiMsgDiv = document.createElement("div");
-                                    aiMsgDiv.className = "message ai-message streaming new-message";
-                                    bubbleDiv = document.createElement("div");
-                                    bubbleDiv.className = "message-bubble";
-                                    textDiv = document.createElement("div");
-                                    textDiv.className = "markdown-body";
-                                    bubbleDiv.appendChild(textDiv);
-                                    aiMsgDiv.appendChild(bubbleDiv);
-                                    if (chatContainer) chatContainer.appendChild(aiMsgDiv);
+                                if (!streamController) {
+                                    streamController = chatView.initStreamingMessage();
                                 }
-
                                 accumulatedText += event.text;
-                                const formatted = formatThoughtBlocks(accumulatedText, true);
-
-                                if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
-                                    const parsedHTML = marked.parse(formatted);
-                                    textDiv.innerHTML = DOMPurify.sanitize(parsedHTML, { ADD_TAGS: ['details', 'summary'], ADD_ATTR: ['class', 'open'] });
-                                    enhanceMarkdownLinksAndImages(textDiv);
-                                } else {
-                                    textDiv.textContent = formatted;
-                                }
-
-                                chatView.scrollToBottom(false);
+                                chatView.updateStreamingMessage(streamController, accumulatedText);
                             } else {
                                 accumulatedText += event.text;
                             }
                         },
                         onDone: (event) => {
-                            chatView.removeTypingIndicator();
-                            if (aiMsgDiv) {
-                                aiMsgDiv.classList.remove("streaming");
-                            }
                             if (state.currentSessionId === submittedSessionId) {
-                                if (!aiMsgDiv) {
+                                if (!streamController) {
                                     chatView.appendMessage(event.reply || accumulatedText, false, [], event.timestamp, false, true, false);
                                 } else {
-                                    const finalFormatted = formatThoughtBlocks(event.reply || accumulatedText, false);
-                                    if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
-                                        const parsedHTML = marked.parse(finalFormatted);
-                                        textDiv.innerHTML = DOMPurify.sanitize(parsedHTML, { ADD_TAGS: ['details', 'summary'], ADD_ATTR: ['class', 'open'] });
-                                        enhanceMarkdownLinksAndImages(textDiv);
-                                    } else {
-                                        textDiv.textContent = finalFormatted;
-                                    }
-                                    attachDownloadButtons(bubbleDiv, event.reply || accumulatedText);
+                                    chatView.finalizeStreamingMessage(streamController, event.reply || accumulatedText);
                                 }
                                 state.currentSessionHistory.push({
                                     text: event.reply || accumulatedText,
@@ -558,8 +523,8 @@ document.addEventListener("DOMContentLoaded", () => {
                             }
                         },
                         onError: (event) => {
-                            chatView.removeTypingIndicator();
-                            if (aiMsgDiv) aiMsgDiv.remove();
+                            chatView.removeStreamingMessage(streamController);
+                            streamController = null;
                             if (state.currentSessionId === submittedSessionId) {
                                 chatView.appendErrorMessage(event.error || "Fehler bei der Antwortgenerierung.");
                             }
@@ -567,7 +532,9 @@ document.addEventListener("DOMContentLoaded", () => {
                     });
 
                     chatView.removeTypingIndicator();
-                    if (aiMsgDiv) aiMsgDiv.classList.remove("streaming");
+                    if (streamController && streamController.aiMsgDiv) {
+                        streamController.aiMsgDiv.classList.remove("streaming");
+                    }
 
                     const sessions = await api.getSessions();
                     sidebarView.renderSessionList(sessions, selectSession, deleteSessionPrompt);

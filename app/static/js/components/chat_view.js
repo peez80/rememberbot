@@ -276,3 +276,79 @@ export const removeTypingIndicator = () => {
         indicator.remove();
     }
 };
+
+export const initStreamingMessage = () => {
+    const chatContainer = getChatContainer();
+    if (!chatContainer) return null;
+
+    removeTypingIndicator();
+
+    const aiMsgDiv = document.createElement("div");
+    aiMsgDiv.className = "message ai-message streaming new-message";
+
+    const bubbleDiv = document.createElement("div");
+    bubbleDiv.className = "message-bubble";
+
+    const textDiv = document.createElement("div");
+    textDiv.className = "markdown-body";
+
+    bubbleDiv.appendChild(textDiv);
+    aiMsgDiv.appendChild(bubbleDiv);
+    chatContainer.appendChild(aiMsgDiv);
+
+    return {
+        aiMsgDiv,
+        bubbleDiv,
+        textDiv
+    };
+};
+
+export const updateStreamingMessage = (controller, accumulatedText) => {
+    if (!controller || !controller.textDiv) return;
+    const formatted = formatThoughtBlocks(accumulatedText, true);
+
+    if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+        const parsedHTML = marked.parse(formatted);
+        controller.textDiv.innerHTML = DOMPurify.sanitize(parsedHTML, {
+            ADD_TAGS: ['details', 'summary'],
+            ADD_ATTR: ['class', 'open']
+        });
+        enhanceMarkdownLinksAndImages(controller.textDiv);
+    } else {
+        controller.textDiv.textContent = formatted;
+    }
+
+    scrollToBottom(false);
+};
+
+export const finalizeStreamingMessage = (controller, replyText) => {
+    removeTypingIndicator();
+    if (!controller) return;
+
+    if (controller.aiMsgDiv) {
+        controller.aiMsgDiv.classList.remove("streaming");
+    }
+
+    const finalFormatted = formatThoughtBlocks(replyText, false);
+    if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+        const parsedHTML = marked.parse(finalFormatted);
+        controller.textDiv.innerHTML = DOMPurify.sanitize(parsedHTML, {
+            ADD_TAGS: ['details', 'summary'],
+            ADD_ATTR: ['class', 'open']
+        });
+        enhanceMarkdownLinksAndImages(controller.textDiv);
+    } else {
+        controller.textDiv.textContent = finalFormatted;
+    }
+
+    if (controller.bubbleDiv) {
+        attachDownloadButtons(controller.bubbleDiv, replyText);
+    }
+};
+
+export const removeStreamingMessage = (controller) => {
+    removeTypingIndicator();
+    if (controller && controller.aiMsgDiv) {
+        controller.aiMsgDiv.remove();
+    }
+};

@@ -39,7 +39,7 @@ I loved the agentic behavior of the `gemini` / `antigravity` CLI, and I wanted t
 - The `antigravity-cli` must be configured locally. The Docker container mounts your local config `~/.gemini/antigravity-cli` to authenticate and run the backend. 
   - *Tip:* If you don't have the CLI installed on your host system, you can initialize it directly through the container by running:
     ```bash
-    docker-compose run --rm web agy setup
+    docker compose run --rm web agy setup
     ```
     (This will interactively guide you through the setup and populate the mounted `~/.gemini/antigravity-cli` directory on your host).
 
@@ -49,7 +49,7 @@ The application is fully containerized and can be started with Docker Compose:
 1. Clone the repository and navigate into the project directory.
 2. Build and start the containers:
    ```bash
-   docker-compose up --build
+   docker compose up --build
    ```
 3. Open your web browser and navigate to `http://localhost:8000`.
 
@@ -57,7 +57,7 @@ The application is fully containerized and can be started with Docker Compose:
 Data such as logged conversations and parsed information are stored in the local `_rememberbot_data` directory, which is mapped into the container. The data is stored isolated in separate subfolders for each user (e.g., `data/alice/sessions`).
 
 ### User Management
-The application supports multi-user authentication without self-registration. Valid users and their passwords must be configured manually in the `users.json` file located in the persistent data volume, specifically under `data/config/users.json` (or `_rememberbot_data/config/users.json` if running via docker-compose).
+The application supports multi-user authentication without self-registration. Valid users and their passwords must be configured manually in the `users.json` file located in the persistent data volume, specifically under `data/config/users.json` (or `_rememberbot_data/config/users.json` if running via docker compose).
 
 Example `users.json`:
 ```json
@@ -77,6 +77,7 @@ RememberBot follows a clean, modular multi-tier architecture. See [`docs/archite
 - **`app/models/`**: Strongly typed Pydantic domain models for auth, sessions, and chat.
 - **`app/services/`**: Decoupled service layer (`auth_service`, `storage_service`, `session_service`, `agy_service`, `chat_service`).
 - **`app/routers/`**: Dedicated FastAPI APIRouters (`auth`, `sessions`, `files`, `chat`).
+- **`app/storage.py` & `app/agy_client.py`**: Lean, backward-compatible facades delegating cleanly to the service layer.
 - **`app/main.py`**: Lean application entry point and middleware configuration.
 - **`app/static/js/`**: Modular Vanilla ES6 frontend (`state`, `api`, `components`, `utils`).
 - **`app/logging_config.py`**: Centralized structured logging.
@@ -111,30 +112,31 @@ The project uses `pytest` and `Playwright` for automated testing, including unit
 To run the test suite, use Docker Compose to execute `pytest` within the container environment:
 
 ```bash
-docker-compose run --rm web pytest tests/
+docker compose run --rm web pytest tests/
 ```
 
 > [!TIP]
 > **Hinweis bei WSL & unendlich hängenden Tests:** Falls Tests über `docker compose` nicht beendet werden (ewig hängen), liegt das meist daran, dass die CLI unter WSL im Docker-Container läuft und NAT'ing-Probleme verursacht. Starte die Tests in diesem Fall mit `--net=host`:
 > ```bash
-> docker-compose run --rm --net=host web pytest tests/
+> docker compose run --rm --net=host web pytest tests/
 > ```
-
-
 
 This will run all tests (both unit tests and Playwright E2E browser tests) together:
 - Centralized error logging, observability & exception handlers (`tests/test_logging.py`)
-- Local storage logic, thumbnail creation & $O(1)$ session lookups (`tests/test_storage.py`, `tests/test_performance_storage.py`)
+- User authentication, session cookies & brute-force rate-limiting (`tests/test_auth.py`, `tests/test_services_auth.py`)
+- Local storage logic, thumbnail creation & $O(1)$ session lookups (`tests/test_storage.py`, `tests/test_performance_storage.py`, `tests/test_services_storage.py`, `tests/test_services_session.py`)
 - Hybrid model & thinking effort configuration, validation, CLI flags (`tests/test_model_and_thinking_configuration.py`)
 - API endpoints, upload thumbnail routing & caching headers (`tests/test_main.py`, `tests/test_upload_thumbnails_and_caching.py`, `tests/test_thinking_status.py`, `tests/test_chat_stability.py`, `tests/test_streaming.py`)
-- Progressive rendering, thumbnail links & infinite scroll integrity (`tests/test_progressive_rendering.py`, `tests/test_scroll_button.py`)
-- `agy` CLI interaction, streaming and JSON parsing (`tests/test_agy_client.py`, `tests/test_streaming.py`)
-- End-to-End browser UI interactions, concurrency and live streaming via Playwright (`tests/test_scroll_e2e.py`, `tests/test_thinking_animation_e2e.py`, `tests/test_visibility_sync_e2e.py`, `tests/test_chat_stability.py`, `tests/test_ui_concurrency_e2e.py`, `tests/test_streaming.py`)
+- Session ZIP export, import & ZipSlip security remediation (`tests/test_session_export_import.py`, `tests/test_security_remediation.py`, `tests/test_session_export_import_e2e.py`)
+- Cache-busting query strings & static asset revalidation (`tests/test_caching_and_cache_busters.py`)
+- Progressive rendering, thumbnail links & infinite scroll integrity (`tests/test_progressive_rendering.py`, `tests/test_scroll_button.py`, `tests/test_lazy_loading.py`)
+- `agy` CLI interaction, streaming and JSON parsing (`tests/test_agy_client.py`, `tests/test_services_agy.py`, `tests/test_streaming.py`)
+- End-to-End browser UI interactions, concurrency and live streaming via Playwright (`tests/test_scroll_e2e.py`, `tests/test_thinking_animation_e2e.py`, `tests/test_visibility_sync_e2e.py`, `tests/test_chat_stability.py`, `tests/test_ui_concurrency_e2e.py`, `tests/test_streaming.py`, `tests/test_lazy_loading_e2e.py`, `tests/test_session_export_import_e2e.py`)
 
 To run only the Playwright E2E browser tests:
 
 ```bash
-docker-compose run --rm web pytest tests/test_scroll_e2e.py tests/test_thinking_animation_e2e.py tests/test_visibility_sync_e2e.py tests/test_chat_stability.py tests/test_ui_concurrency_e2e.py tests/test_streaming.py
+docker compose run --rm web pytest -k "e2e"
 ```
 
 

@@ -196,15 +196,6 @@ save_auth_sessions = auth_service.save_auth_sessions
 _active_tasks = supervisor.active_tasks
 _active_chat_sessions = supervisor.active_chat_sessions
 
-def _handle_bg_task_done(task: asyncio.Task):
-    supervisor._handle_bg_task_done(task)
-
-def _format_local_links(text: str, username: str, session_id: str) -> str:
-    return format_local_links(text, username, session_id)
-
-def _format_thoughts_for_storage(text: str) -> str:
-    return format_thought_blocks(text, is_streaming=False)
-
 def _get_static_asset_version(relative_path: str) -> str:
     """Returns the mtime timestamp of a static asset as a cache-busting version string."""
     try:

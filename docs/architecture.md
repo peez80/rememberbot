@@ -30,6 +30,11 @@ graph TD
             R_Files["routers/files.py"]
         end
 
+        subgraph Facades ["Facades (Compatibility & Shared Locks)"]
+            F_Storage["storage.py"]
+            F_AGY["agy_client.py"]
+        end
+
         subgraph Services ["Service Layer (app/services)"]
             S_Auth["auth_service.py"]
             S_Session["session_service.py"]
@@ -54,6 +59,7 @@ graph TD
     UI_API --> Routers
     AppEntry --> Routers
     Routers --> Services
+    Facades --> Services
     Services --> Core
     Services --> M_Domain
     S_AGY --> CLI
@@ -77,17 +83,21 @@ graph TD
 ### 2.3 Service-Schicht (`app/services/`)
 - **[`auth_service.py`](file:///apps/app/services/auth_service.py)**: Kapselt Benutzer-Authentifizierung, Session-Token-Lebenszyklus, Cookie-Verwaltung und Rate-Limiting gegen Brute-Force-Angriffe.
 - **[`storage_service.py`](file:///apps/app/services/storage_service.py)**: Verantwortlich für atomare JSON-Schreibzugriffe (mit Temp-Files und `os.replace`), Dateisystem-Locks, On-Demand-Thumbnail-Erstellung und temporäre Bereinigungen.
-- **[`session_service.py`](file:///apps/app/services/session_service.py)**: Verwaltet Session-Lebenszyklen (CRUD), Einstellungs- und Titel-Updates, Historienverwaltung und ZipSlip-geschützte ZIP-Exporte/Importe mit automatischer URL- und Pfad-Remappung.
+- **[`session_service.py`](file:///apps/app/services/session_service.py)**: Verwaltet Session-Lebenszyklen (CRUD), Einstellungs- und Titel-Updates, Historienverwaltung, Upload-Persistierung mit PIL-Dimensionsextraktion (`save_user_attachments`) und ZipSlip-geschützte ZIP-Exporte/Importe mit automatischer URL- und Pfad-Remappung.
 - **[`agy_service.py`](file:///apps/app/services/agy_service.py)**: Kapselt die `agy`-CLI-Subprozess-Ausführung mit nativer Session-Fortführung (`--conversation <id>`), One-Time-History-Seeding bei bestehenden/importierten Sessions, DB-Prüfung (`conversation_exists`), dynamischer Parameterübergabe (`--model`, `--effort`), NDJSON-Stream-Parsing und SVG-Avatar-Generierung.
-- **[`chat_service.py`](file:///apps/app/services/chat_service.py)**: Orchestriert die Konversationslogik, Anhänge, GPS-Standorteinspeisung, Historienpersistierung, Einspeisung des `technical_prompt` für Workspace-Dateipfade (`/app/data/.../data`) und entkoppelte SSE-Token-Streams.
+- **[`chat_service.py`](file:///apps/app/services/chat_service.py)**: Orchestriert die Konversationslogik über eine deduplizierte Lifecycle-Pipeline (`_prepare_chat_turn` für Historie/Seeding/Prompting und `_finalize_chat_turn` für Link-Formatierung, Icon-Trigger und Persistierung) sowohl für Non-Streaming als auch für SSE-Token-Streams.
 
-### 2.4 Router-Schicht (`app/routers/`)
+### 2.4 Fassaden-Schicht (`app/storage.py` & `app/agy_client.py`)
+- **[`storage.py`](file:///apps/app/storage.py)**: Transparente Fassade, die historische Aufrufe direkt an die kanonischen Instanzen von `storage_service` und `session_service` delegiert und sicherstellt, dass alle Komponenten dieselben Concurrency-Locks (`session_locks`) teilen.
+- **[`agy_client.py`](file:///apps/app/agy_client.py)**: Transparente Fassade, die Aufrufe an `AGYService` weiterleitet und Rückwärtskompatibilität für bestehende Aufrufer und Test-Mocks wahrt.
+
+### 2.5 Router-Schicht (`app/routers/`)
 - **[`auth.py`](file:///apps/app/routers/auth.py)**: Endpunkte für Login, Logout und Authentifizierungsstatus (`/api/auth/*`).
 - **[`sessions.py`](file:///apps/app/routers/sessions.py)**: Endpunkte für Session-Management, Status, Historie, Einstellungen, Titel, Icons, Modell-Katalog (`GET /api/sessions/models/catalog`) sowie Export und Import (`/api/sessions/*`).
-- **[`chat.py`](file:///apps/app/routers/chat.py)**: Endpunkt für Chat-Nachrichten und SSE-Streaming (`/api/sessions/{id}/chat`).
+- **[`chat.py`](file:///apps/app/routers/chat.py)**: Endpunkt für Chat-Nachrichten und SSE-Streaming (`/api/sessions/{id}/chat`), delegiert Upload-Verarbeitung und Turn-Generierung vollständig an die Services.
 - **[`files.py`](file:///apps/app/routers/files.py)**: Datei- und Thumbnail-Auslieferung (`/uploads/*`, `/app/data/*`).
 
-### 2.5 Orchestrator (`app/main.py`)
+### 2.6 Orchestrator (`app/main.py`)
 - Initialisiert FastAPI, globale Exception-Handler, HTTP-Security-Header, bindet die Router ein und validiert beim Anwendungsstart via Lifespan-Event die Standard-Modell- und Thinking-Konfiguration gegen `agy`.
 
 ---
@@ -96,11 +106,11 @@ graph TD
 
 Das Frontend verzichtet auf schwere Frameworks und Build-Tools und setzt auf moderne, native ECMAScript-Module (`type="module"`):
 
-- **[`main.js`](file:///apps/app/static/js/main.js)**: Zentraler Application Orchestrator, dynamische Thinking-Effort-Optionen, Header-Modell-Badge und Event-Bus-Verbindung.
+- **[`main.js`](file:///apps/app/static/js/main.js)**: Zentraler Application Orchestrator, dynamische Thinking-Effort-Optionen, Header-Modell-Badge, Event-Bus-Verbindung und entkoppelte SSE-Stream-Steuerung via `chatView`-Lifecycle-Methoden.
 - **[`state.js`](file:///apps/app/static/js/state.js)**: Zentraler, reaktiver UI-State (aktive Session, Submit-Locks, Nachrichten-Batches, Anhänge).
 - **[`api/client.js`](file:///apps/app/static/js/api/client.js)**: REST-Client mit globaler 401-Authentifizierungs-Abfanglogik und Modellkatalog-Abruf.
 - **[`api/sse.js`](file:///apps/app/static/js/api/sse.js)**: Streaming-Reader für Server-Sent Events via `ReadableStream`.
-- **[`components/chat_view.js`](file:///apps/app/static/js/components/chat_view.js)**: Rendern von Nachrichten, Markdown, `<details class="ai-reasoning">`-Blöcken, Dateikarten und Infinite-Scroll.
+- **[`components/chat_view.js`](file:///apps/app/static/js/components/chat_view.js)**: Rendern von Nachrichten, Markdown, `<details class="ai-reasoning">`-Blöcken, Dateikarten, Infinite-Scroll sowie Kapselung des SSE-Streaming-Lifecycles (`initStreamingMessage`, `updateStreamingMessage`, `finalizeStreamingMessage`, `removeStreamingMessage`).
 - **[`components/sidebar_view.js`](file:///apps/app/static/js/components/sidebar_view.js)**: Session-Listenanzeige, Icon-Rendering, Löschen und Aktiv-Indikator.
 - **[`components/input_bar.js`](file:///apps/app/static/js/components/input_bar.js)**: Textarea-Auto-Resize, Drag-and-Drop, Paste und clientseitige Bildkompression (Canvas).
 - **[`components/modals.js`](file:///apps/app/static/js/components/modals.js)**: Login-Modal, Einstellungs-Dialog (Modell & Thinking Effort Auswahl mit dynamischen Validierungshinweisen) und Export/Import-Dialoge.

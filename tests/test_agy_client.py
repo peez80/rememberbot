@@ -8,52 +8,9 @@ from app.agy_client import AgyClient
 def client():
     return AgyClient(executable_path="dummy_agy")
 
-@patch("app.agy_client.os.path.exists")
-@patch("app.agy_client.os.listdir")
-@pytest.mark.asyncio
-async def test_is_authenticated_via_dir(mock_listdir, mock_exists, client):
-    # Setup mock to return true for dir exists and has content
-    mock_exists.return_value = True
-    mock_listdir.return_value = ["credentials.json"]
-    
-    assert client.is_authenticated() == True
-    
-@patch("app.agy_client.os.path.exists")
-@patch("app.agy_client.subprocess.run")
-@pytest.mark.asyncio
-async def test_is_authenticated_via_cli(mock_run, mock_exists, client):
-    # Setup mock: dir doesn't exist, but CLI runs fine
-    def mock_exists_side_effect(path):
-        if "antigravity-cli" in path:
-            return False
-        return True
-    mock_exists.side_effect = mock_exists_side_effect
-    
-    mock_run.return_value = MagicMock(returncode=0)
-    
-    assert client.is_authenticated() == True
-    mock_run.assert_called_once()
 
-@patch("app.agy_client.subprocess.Popen")
-@pytest.mark.asyncio
-async def test_get_login_url_success(mock_popen, client):
-    # Setup a mock process that yields a URL
-    mock_process = MagicMock()
-    mock_process.stdout.readline.side_effect = [
-        "Please visit this URL to login:\n",
-        "https://antigravity.google/auth?code=xyz\n",
-        "Enter code:\n",
-        ""
-    ]
-    mock_popen.return_value = mock_process
-    
-    url = client.get_login_url()
-    
-    assert url == "https://antigravity.google/auth?code=xyz"
-    mock_popen.assert_called_once()
-
-@patch("app.agy_client.os.remove")
-@patch("app.agy_client.asyncio.create_subprocess_exec")
+@patch("app.services.agy_service.os.remove")
+@patch("app.services.agy_service.asyncio.create_subprocess_exec")
 @pytest.mark.asyncio
 async def test_process_message_success(mock_create, mock_remove, client, tmp_path):
     expected_response = {
@@ -100,8 +57,8 @@ async def test_process_message_success(mock_create, mock_remove, client, tmp_pat
     assert "<chat_history>" in content
     assert "[2024-01-01T12:00Z] User: Hallo" in content
 
-@patch("app.agy_client.os.remove")
-@patch("app.agy_client.asyncio.create_subprocess_exec")
+@patch("app.services.agy_service.os.remove")
+@patch("app.services.agy_service.asyncio.create_subprocess_exec")
 @pytest.mark.asyncio
 async def test_process_message_with_conversation_id(mock_create, mock_remove, client, tmp_path):
     expected_response = {
@@ -138,7 +95,7 @@ async def test_process_message_with_conversation_id(mock_create, mock_remove, cl
     # No temporary file should have been written or removed
     mock_remove.assert_not_called()
 
-@patch("app.agy_client.asyncio.create_subprocess_exec")
+@patch("app.services.agy_service.asyncio.create_subprocess_exec")
 @pytest.mark.asyncio
 async def test_stream_message_with_conversation_id_and_init(mock_create, client, tmp_path):
     mock_ndjson_lines = [
@@ -186,7 +143,7 @@ def test_conversation_exists(client, tmp_path):
         assert client.conversation_exists("some-conv-id") is True
 
 
-@patch("app.agy_client.asyncio.create_subprocess_exec")
+@patch("app.services.agy_service.asyncio.create_subprocess_exec")
 @pytest.mark.asyncio
 async def test_process_message_with_multiple_images(mock_create, client):
     mock_process = MagicMock()
@@ -206,9 +163,9 @@ async def test_process_message_with_multiple_images(mock_create, client):
     assert "/tmp/image1.jpg" in prompt_arg
     assert "/tmp/image2.jpg" in prompt_arg
 
-@patch("app.agy_client.os.remove")
-@patch("app.agy_client.asyncio.sleep")
-@patch("app.agy_client.asyncio.create_subprocess_exec")
+@patch("app.services.agy_service.os.remove")
+@patch("app.services.agy_service.asyncio.sleep")
+@patch("app.services.agy_service.asyncio.create_subprocess_exec")
 @pytest.mark.asyncio
 async def test_process_message_retry_success(mock_create, mock_sleep, mock_remove, client, tmp_path):
     # Mock CLI failing twice, then succeeding
@@ -245,9 +202,9 @@ async def test_process_message_retry_success(mock_create, mock_sleep, mock_remov
     assert mock_sleep.call_count == 2
     mock_remove.assert_called_once()
 
-@patch("app.agy_client.os.remove")
-@patch("app.agy_client.asyncio.sleep")
-@patch("app.agy_client.asyncio.create_subprocess_exec")
+@patch("app.services.agy_service.os.remove")
+@patch("app.services.agy_service.asyncio.sleep")
+@patch("app.services.agy_service.asyncio.create_subprocess_exec")
 @pytest.mark.asyncio
 async def test_process_message_retry_failure(mock_create, mock_sleep, mock_remove, client, tmp_path):
     # Mock CLI failing 6 times (1 initial + 5 retries)

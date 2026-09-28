@@ -31,23 +31,9 @@ class BackgroundSupervisor:
 
     def register_session(self, username: str, session_id: str):
         self.active_chat_sessions.add((username, session_id))
-        try:
-            import sys
-            main_mod = sys.modules.get("app.main")
-            if main_mod and hasattr(main_mod, "_active_chat_sessions"):
-                main_mod._active_chat_sessions.add((username, session_id))
-        except Exception:
-            pass
 
     def unregister_session(self, username: str, session_id: str):
         self.active_chat_sessions.discard((username, session_id))
-        try:
-            import sys
-            main_mod = sys.modules.get("app.main")
-            if main_mod and hasattr(main_mod, "_active_chat_sessions"):
-                main_mod._active_chat_sessions.discard((username, session_id))
-        except Exception:
-            pass
 
     @asynccontextmanager
     async def track_session(self, username: str, session_id: str):

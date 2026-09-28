@@ -20,7 +20,6 @@ export const toggleSidebar = () => {
 
 export const renderSessionList = (sessions, onSelectSession, onDeleteSession) => {
     state.lastSessions = sessions;
-    window.lastSessions = sessions;
     const sessionList = document.getElementById("session-list");
     if (!sessionList) return;
 

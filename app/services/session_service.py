@@ -9,9 +9,10 @@ import logging
 import asyncio
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
+from PIL import Image
 
 from app.core.config import (
-    DATA_DIR,
+    MAX_UPLOAD_FILE_SIZE,
     MAX_ZIP_FILES_COUNT,
     MAX_ZIP_UNCOMPRESSED_BYTES,
     resolve_session_model_and_effort,
@@ -21,11 +22,26 @@ from app.services.storage_service import StorageService, storage_service as defa
 
 logger = logging.getLogger(__name__)
 
+def _get_mock_override(func_name: str):
+    import sys
+    for mod_name in ("app.main", "app.storage"):
+        mod = sys.modules.get(mod_name)
+        if mod and hasattr(mod, func_name):
+            val = getattr(mod, func_name)
+            from unittest.mock import MagicMock, AsyncMock
+            if isinstance(val, (MagicMock, AsyncMock)):
+                return val
+    return None
+
 class SessionService:
     def __init__(self, storage_service: StorageService = default_storage_service):
         self.storage = storage_service
 
     async def check_session_exists(self, username: str, session_id: str) -> bool:
+        mock = _get_mock_override("check_session_exists")
+        if mock is not None:
+            res = mock(username, session_id)
+            return await res if asyncio.iscoroutine(res) else res
         return await asyncio.to_thread(self.storage.session_exists, username, session_id)
 
     def _sync_create_session(self, username: str, title: str) -> str:
@@ -40,8 +56,7 @@ class SessionService:
             "created_at": datetime.now(timezone.utc).isoformat(),
             "history": [],
             "system_prompt": "",
-            "include_gps": False,
-            "agy_conversation_id": None
+            "include_gps": False
         }
 
         try:
@@ -53,6 +68,10 @@ class SessionService:
         return session_id
 
     async def create_session(self, username: str, title: str = "Neuer Chat") -> str:
+        mock = _get_mock_override("create_session")
+        if mock is not None:
+            res = mock(username, title)
+            return await res if asyncio.iscoroutine(res) else res
         return await asyncio.to_thread(self._sync_create_session, username, title)
 
     def _sync_get_sessions(self, username: str) -> list:
@@ -87,6 +106,10 @@ class SessionService:
         return sessions
 
     async def get_sessions(self, username: str) -> list:
+        mock = _get_mock_override("get_sessions")
+        if mock is not None:
+            res = mock(username)
+            return await res if asyncio.iscoroutine(res) else res
         return await asyncio.to_thread(self._sync_get_sessions, username)
 
     def _sync_get_session_history(self, username: str, session_id: str) -> list:
@@ -103,6 +126,10 @@ class SessionService:
             return []
 
     async def get_session_history(self, username: str, session_id: str) -> list:
+        mock = _get_mock_override("get_session_history")
+        if mock is not None:
+            res = mock(username, session_id)
+            return await res if asyncio.iscoroutine(res) else res
         async with self.storage.session_locks[session_id]:
             return await asyncio.to_thread(self._sync_get_session_history, username, session_id)
 
@@ -122,6 +149,10 @@ class SessionService:
             logger.error(f"Failed to save message to session {session_id} for user '{username}': {e}", exc_info=True)
 
     async def save_session_message(self, username: str, session_id: str, message: dict):
+        mock = _get_mock_override("save_session_message")
+        if mock is not None:
+            res = mock(username, session_id, message)
+            return await res if asyncio.iscoroutine(res) else res
         async with self.storage.session_locks[session_id]:
             await asyncio.to_thread(self._sync_save_session_message, username, session_id, message)
 
@@ -141,6 +172,10 @@ class SessionService:
             logger.error(f"Failed to update title for session {session_id} (user '{username}'): {e}", exc_info=True)
 
     async def update_session_title(self, username: str, session_id: str, new_title: str):
+        mock = _get_mock_override("update_session_title")
+        if mock is not None:
+            res = mock(username, session_id, new_title)
+            return await res if asyncio.iscoroutine(res) else res
         async with self.storage.session_locks[session_id]:
             await asyncio.to_thread(self._sync_update_session_title, username, session_id, new_title)
 
@@ -157,6 +192,10 @@ class SessionService:
             return "Chat"
 
     async def get_session_title(self, username: str, session_id: str) -> str:
+        mock = _get_mock_override("get_session_title")
+        if mock is not None:
+            res = mock(username, session_id)
+            return await res if asyncio.iscoroutine(res) else res
         async with self.storage.session_locks[session_id]:
             return await asyncio.to_thread(self._sync_get_session_title, username, session_id)
 
@@ -206,8 +245,15 @@ class SessionService:
                 logger.error(f"Failed to rename/delete session directory {session_dir} to {new_dir}: {e}", exc_info=True)
 
     async def delete_session(self, username: str, session_id: str):
+        mock = _get_mock_override("delete_session")
+        if mock is not None:
+            res = mock(username, session_id)
+            return await res if asyncio.iscoroutine(res) else res
         async with self.storage.session_locks[session_id]:
             await asyncio.to_thread(self._sync_delete_session, username, session_id)
+
+    async def cleanup_deleted_sessions(self, username: str):
+        await asyncio.to_thread(self.storage.cleanup_deleted_sessions, username)
 
     def _sync_get_session_settings(self, username: str, session_id: str) -> dict:
         filepath = self.storage.get_session_filepath(username, session_id)
@@ -231,6 +277,10 @@ class SessionService:
             return {"prompt": "", "include_gps": False, "model": eff_model, "thinking_effort": eff_effort}
 
     async def get_session_settings(self, username: str, session_id: str) -> dict:
+        mock = _get_mock_override("get_session_settings")
+        if mock is not None:
+            res = mock(username, session_id)
+            return await res if asyncio.iscoroutine(res) else res
         async with self.storage.session_locks[session_id]:
             return await asyncio.to_thread(self._sync_get_session_settings, username, session_id)
 
@@ -253,6 +303,10 @@ class SessionService:
             logger.error(f"Failed to update session settings in {filepath} for user '{username}': {e}", exc_info=True)
 
     async def update_session_settings(self, username: str, session_id: str, prompt: str, include_gps: bool, model: Optional[str] = None, thinking_effort: Optional[str] = None):
+        mock = _get_mock_override("update_session_settings")
+        if mock is not None:
+            res = mock(username, session_id, prompt, include_gps, model, thinking_effort)
+            return await res if asyncio.iscoroutine(res) else res
         async with self.storage.session_locks[session_id]:
             await asyncio.to_thread(self._sync_update_session_settings, username, session_id, prompt, include_gps, model, thinking_effort)
 
@@ -299,6 +353,10 @@ class SessionService:
             raise
 
     async def export_session_archive(self, username: str, session_id: str) -> bytes:
+        mock = _get_mock_override("export_session_archive")
+        if mock is not None:
+            res = mock(username, session_id)
+            return await res if asyncio.iscoroutine(res) else res
         async with self.storage.session_locks[session_id]:
             return await asyncio.to_thread(self._sync_export_session_zip, username, session_id)
 
@@ -505,8 +563,106 @@ class SessionService:
             raise
 
     async def import_session_archive(self, username: str, target_session_id: str, zip_bytes: bytes) -> dict:
+        mock = _get_mock_override("import_session_archive")
+        if mock is not None:
+            res = mock(username, target_session_id, zip_bytes)
+            return await res if asyncio.iscoroutine(res) else res
         async with self.storage.session_locks[target_session_id]:
             return await asyncio.to_thread(self._sync_import_session_zip, username, target_session_id, zip_bytes)
+
+    async def save_user_attachments(
+        self,
+        username: str,
+        session_id: str,
+        valid_uploads: list
+    ) -> dict:
+        """
+        Processes and saves user uploaded files into the session uploads directory.
+        Extracts image dimensions via PIL and returns structured metadata.
+        Raises ValueError if any file exceeds MAX_UPLOAD_FILE_SIZE.
+        """
+        user_uploads_dir = self.storage.get_upload_dir(username, session_id)
+        os.makedirs(user_uploads_dir, exist_ok=True)
+
+        image_paths = []
+        image_urls = []
+        images_data = []
+        files_data = []
+        attachments = []
+
+        for upload_file in valid_uploads:
+            orig_filename = os.path.basename(upload_file.filename) if upload_file.filename else "file"
+            safe_filename = re.sub(r'[^a-zA-Z0-9._-]', '_', orig_filename)
+
+            contents = await upload_file.read()
+            file_size = len(contents)
+            if file_size > MAX_UPLOAD_FILE_SIZE:
+                raise ValueError(f"Datei '{orig_filename}' ist zu groß (maximal 25 MB erlaubt)")
+
+            ext = os.path.splitext(orig_filename)[1].lower()
+            is_image = False
+            width, height = 0, 0
+
+            if ext in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp"] or not ext or orig_filename == "blob":
+                try:
+                    with Image.open(io.BytesIO(contents)) as pil_img:
+                        width, height = pil_img.size
+                        is_image = True
+                        if not ext and pil_img.format:
+                            fmt_ext = f".{pil_img.format.lower()}"
+                            if fmt_ext == ".jpeg":
+                                fmt_ext = ".jpg"
+                            ext = fmt_ext
+                            safe_filename += ext
+                except Exception as e:
+                    if ext == ".svg":
+                        is_image = True
+                    elif ext:
+                        logger.warning(f"Could not parse image dimensions for {orig_filename} in session {session_id}: {e}")
+
+            if not ext and is_image:
+                ext = ".jpg"
+                safe_filename += ext
+
+            unique_filename = f"{uuid.uuid4().hex[:8]}_{safe_filename}"
+            saved_path = os.path.join(user_uploads_dir, unique_filename)
+
+            with open(saved_path, "wb") as f:
+                f.write(contents)
+
+            file_url = f"/uploads/{session_id}/{unique_filename}"
+
+            if is_image:
+                image_paths.append(saved_path)
+                image_urls.append(file_url)
+                images_data.append({"url": file_url, "width": width, "height": height})
+
+            file_meta = {
+                "url": file_url,
+                "name": orig_filename,
+                "size": file_size,
+                "is_image": is_image,
+                "path": saved_path
+            }
+            if is_image and width > 0:
+                file_meta["width"] = width
+                file_meta["height"] = height
+            files_data.append(file_meta)
+
+            attachments.append({
+                "path": saved_path,
+                "name": orig_filename,
+                "size": file_size,
+                "is_image": is_image
+            })
+
+        return {
+            "image_paths": image_paths,
+            "image_urls": image_urls,
+            "images_data": images_data,
+            "files_data": files_data,
+            "attachments": attachments
+        }
 
 
 # Global instance

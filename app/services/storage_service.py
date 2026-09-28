@@ -1,5 +1,4 @@
 import os
-import io
 import json
 import uuid
 import time
@@ -11,7 +10,6 @@ from typing import Dict, Any, Optional
 from PIL import Image, ImageOps
 
 from app.core.config import DATA_DIR
-from app.core.formatters import sanitize_svg
 
 logger = logging.getLogger(__name__)
 
@@ -27,25 +25,22 @@ class StorageService:
     def data_dir(self) -> str:
         if self._custom_data_dir is not None:
             return self._custom_data_dir
-        try:
-            import sys
-            storage_mod = sys.modules.get("app.storage")
-            if storage_mod and hasattr(storage_mod, "DATA_DIR"):
-                val = storage_mod.DATA_DIR
-                if str(val) != str(DATA_DIR):
-                    return str(val)
-            main_mod = sys.modules.get("app.main")
-            if main_mod and hasattr(main_mod, "DATA_DIR"):
-                val = main_mod.DATA_DIR
-                if str(val) != str(DATA_DIR):
-                    return str(val)
-            if storage_mod and hasattr(storage_mod, "DATA_DIR"):
-                return str(storage_mod.DATA_DIR)
-            if main_mod and hasattr(main_mod, "DATA_DIR"):
-                return str(main_mod.DATA_DIR)
-        except Exception:
-            pass
+        import sys
+        storage_mod = sys.modules.get("app.storage")
+        if storage_mod and hasattr(storage_mod, "DATA_DIR") and storage_mod.DATA_DIR != DATA_DIR:
+            return storage_mod.DATA_DIR
+        main_mod = sys.modules.get("app.main")
+        if main_mod and hasattr(main_mod, "DATA_DIR") and main_mod.DATA_DIR != DATA_DIR:
+            return main_mod.DATA_DIR
         return DATA_DIR
+
+    @data_dir.setter
+    def data_dir(self, value: Optional[str]):
+        self._custom_data_dir = value
+
+    @data_dir.deleter
+    def data_dir(self):
+        self._custom_data_dir = None
 
     def init_storage(self):
         """Ensure the base data directory and config directory exist."""
@@ -149,6 +144,26 @@ class StorageService:
         if os.path.exists(target):
             return target
         return None
+
+    def get_upload_dir(self, username: str, session_id: str) -> str:
+        safe_session_id = os.path.basename(session_id)
+        return os.path.join(self.data_dir, username, "sessions", safe_session_id, "uploads")
+
+    def get_upload_filepath(self, username: str, session_id: str, filename: str) -> str:
+        safe_filename = os.path.basename(filename)
+        return os.path.join(self.get_upload_dir(username, session_id), safe_filename)
+
+    def get_thumbnail_dir(self, username: str, session_id: str) -> str:
+        safe_session_id = os.path.basename(session_id)
+        return os.path.join(self.data_dir, username, "sessions", safe_session_id, "thumbnails")
+
+    def get_thumbnail_filepath(self, username: str, session_id: str, filename: str) -> str:
+        safe_filename = os.path.basename(filename)
+        return os.path.join(self.get_thumbnail_dir(username, session_id), safe_filename)
+
+    def get_data_dir(self, username: str, session_id: str) -> str:
+        safe_session_id = os.path.basename(session_id)
+        return os.path.join(self.data_dir, username, "sessions", safe_session_id, "data")
 
     def session_exists(self, username: str, session_id: str) -> bool:
         safe_session_id = os.path.basename(session_id)

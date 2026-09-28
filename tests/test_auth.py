@@ -5,7 +5,7 @@ from app.main import app
 
 client = TestClient(app)
 
-@patch("app.main.get_valid_users")
+@patch("app.services.auth_service.auth_service.get_valid_users")
 def test_login_success(mock_get_valid_users):
     mock_get_valid_users.return_value = {"alice": "secret123"}
     
@@ -16,7 +16,7 @@ def test_login_success(mock_get_valid_users):
     # Check that cookie is set
     assert "session_token" in response.cookies
 
-@patch("app.main.get_valid_users")
+@patch("app.services.auth_service.auth_service.get_valid_users")
 def test_login_failure(mock_get_valid_users):
     mock_get_valid_users.return_value = {"alice": "secret123"}
     
@@ -24,7 +24,7 @@ def test_login_failure(mock_get_valid_users):
     assert response.status_code == 401
     assert "session_token" not in response.cookies
 
-@patch("app.main.ACTIVE_SESSIONS", {"fake-token-123": "alice"})
+@patch("app.services.auth_service.auth_service.active_sessions", {"fake-token-123": "alice"})
 def test_status_authenticated():
     client.cookies.set("session_token", "fake-token-123")
     response = client.get("/api/auth/status")
@@ -37,7 +37,7 @@ def test_status_unauthenticated():
     assert response.status_code == 200
     assert response.json() == {"authenticated": False}
 
-@patch("app.main.ACTIVE_SESSIONS", {"fake-token-123": "alice"})
+@patch("app.services.auth_service.auth_service.active_sessions", {"fake-token-123": "alice"})
 def test_logout():
     client.cookies.set("session_token", "fake-token-123")
     response = client.post("/api/auth/logout")

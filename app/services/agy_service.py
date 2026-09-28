@@ -12,6 +12,7 @@ from app.core.config import (
     ICON_GENERATION_TIMEOUT_SECONDS,
     AGY_DEFAULT_MODEL,
     AGY_DEFAULT_THINKING_EFFORT,
+    MODEL_CATALOG,
 )
 from app.core.formatters import format_thought_blocks, sanitize_svg
 
@@ -20,111 +21,12 @@ logger = logging.getLogger(__name__)
 class AGYService:
     def __init__(self, executable_path: str = "agy"):
         self.executable_path = executable_path
-        self._login_process = None
-
-    def estimate_tokens(self, text: str) -> int:
-        """Rough estimation: ~4 characters per token for latin/code text."""
-        if not text:
-            return 0
-        return max(1, len(text) // 4)
-
-    def prune_history_to_token_budget(self, messages: List[Dict[str, Any]], max_tokens: int = 24000) -> Tuple[List[Dict[str, Any]], bool]:
-        """Prunes older messages from history if the token budget is exceeded."""
-        if not messages:
-            return [], False
-
-        total_tokens = 0
-        pruned_reversed = []
-        was_truncated = False
-
-        for msg in reversed(messages):
-            msg_text = msg.get("text", "")
-            msg_tokens = self.estimate_tokens(msg_text)
-            if total_tokens + msg_tokens <= max_tokens:
-                pruned_reversed.append(msg)
-                total_tokens += msg_tokens
-            else:
-                was_truncated = True
-
-        return list(reversed(pruned_reversed)), was_truncated
-
-    def is_authenticated(self) -> bool:
-        cred_dir = os.path.expanduser("~/.gemini/antigravity-cli")
-        if os.path.exists(cred_dir) and len(os.listdir(cred_dir)) > 0:
-            return True
 
     def conversation_exists(self, conv_id: Optional[str]) -> bool:
         if not conv_id:
             return False
         path = os.path.expanduser(f"~/.gemini/antigravity-cli/conversations/{conv_id}.db")
         return os.path.isfile(path)
-
-
-        try:
-            subprocess.run([self.executable_path, "--help"], capture_output=True, text=True, timeout=2)
-            return True
-        except FileNotFoundError:
-            return True
-        except subprocess.TimeoutExpired:
-            return False
-        except Exception:
-            return False
-
-    def get_login_url(self) -> str:
-        try:
-            if self._login_process:
-                self._login_process.terminate()
-
-            self._login_process = subprocess.Popen(
-                [self.executable_path, "login"],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1
-            )
-
-            for line in iter(self._login_process.stdout.readline, ''):
-                logger.info(f"agy login output: {line.strip()}")
-                match = re.search(r'(https://[^\s]+)', line)
-                if match:
-                    return match.group(1)
-
-                if "code:" in line.lower() or "enter" in line.lower():
-                    break
-
-            return "No URL found in agy login output."
-        except FileNotFoundError:
-            logger.warning("agy executable not found for login. Returning mock URL.")
-            return "https://antigravity.google/mock-login"
-        except Exception as e:
-            logger.error(f"Error getting login URL: {e}", exc_info=True)
-            return f"Error: {e}"
-
-    def submit_auth_code(self, code: str) -> bool:
-        if not self._login_process:
-            logger.error("No active login process found.")
-            return False
-
-        try:
-            self._login_process.stdin.write(f"{code}\n")
-            self._login_process.stdin.flush()
-
-            try:
-                self._login_process.wait(timeout=5)
-                self._login_process = None
-                return True
-            except subprocess.TimeoutExpired:
-                logger.warning("agy login process did not exit after code submission.")
-                self._login_process.terminate()
-                self._login_process = None
-                return True
-        except Exception as e:
-            logger.error(f"Error submitting auth code: {e}", exc_info=True)
-            if self._login_process:
-                self._login_process.terminate()
-                self._login_process = None
-            return False
 
     def _build_prompt_and_history(
         self,
@@ -220,8 +122,12 @@ class AGYService:
             context_messages, new_message, image_paths, attachments, system_prompt, cwd, conversation_id
         )
 
-        effective_model = model or AGY_DEFAULT_MODEL
-        effective_effort = thinking_effort or AGY_DEFAULT_THINKING_EFFORT
+        effective_model = model
+        effective_effort = thinking_effort
+        if effective_model and effective_model != "default":
+            spec = MODEL_CATALOG.get(effective_model, {})
+            if not spec.get("supports_thinking", True):
+                effective_effort = None
 
         cmd = [self.executable_path, "--dangerously-skip-permissions", "--output-format", "stream-json"]
         if effective_model and effective_model != "default":

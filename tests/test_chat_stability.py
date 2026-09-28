@@ -41,12 +41,12 @@ def run_around_tests():
     clear_mock_auth()
 
 
-@patch("app.main.agy_client")
-@patch("app.main.get_session_history")
-@patch("app.main.save_session_message")
-@patch("app.main.get_session_title")
-@patch("app.main.check_session_exists")
-@patch("app.main.get_session_settings")
+@patch("app.services.chat_service.chat_service.agy_service")
+@patch("app.services.session_service.session_service.get_session_history", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.save_session_message", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_title", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.check_session_exists", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_settings", new_callable=AsyncMock)
 @pytest.mark.asyncio
 async def test_session_marked_processing_immediately(
     mock_get_settings, mock_exists, mock_title, mock_save_msg, mock_get_history, mock_agy_client

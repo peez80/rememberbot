@@ -33,16 +33,6 @@ class AuthService:
         return os.path.join(self.data_dir, "config", "users.json")
 
     def get_valid_users(self) -> Dict[str, str]:
-        try:
-            import sys
-            main_mod = sys.modules.get("app.main")
-            if main_mod and hasattr(main_mod, "get_valid_users") and callable(main_mod.get_valid_users):
-                from unittest.mock import MagicMock
-                if isinstance(main_mod.get_valid_users, MagicMock):
-                    return main_mod.get_valid_users()
-        except Exception:
-            pass
-
         if os.path.exists(self.users_file):
             try:
                 with open(self.users_file, "r", encoding="utf-8") as f:
@@ -54,13 +44,6 @@ class AuthService:
 
     @property
     def current_sessions(self) -> Dict[str, Any]:
-        try:
-            import sys
-            main_mod = sys.modules.get("app.main")
-            if main_mod and hasattr(main_mod, "ACTIVE_SESSIONS") and main_mod.ACTIVE_SESSIONS is not None:
-                return main_mod.ACTIVE_SESSIONS
-        except Exception:
-            pass
         return self.active_sessions
 
     def load_auth_sessions(self):

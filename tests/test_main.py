@@ -1,6 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 from app.main import app
 
@@ -38,7 +38,7 @@ def test_unauthenticated_access():
     assert client.post("/api/sessions/123/chat", data={"message":"test"}).status_code == 401
     assert client.get("/uploads/123/test.jpg").status_code == 401
 
-@patch("app.main.create_session")
+@patch("app.services.session_service.session_service.create_session", new_callable=AsyncMock)
 def test_create_session_endpoint(mock_create):
     mock_auth()
     mock_create.return_value = "sess-123"
@@ -47,9 +47,9 @@ def test_create_session_endpoint(mock_create):
     assert response.json() == {"id": "sess-123", "title": "Neuer Chat"}
     mock_create.assert_called_once_with("testuser", "Neuer Chat")
 
-@patch("app.main.cleanup_deleted_sessions")
-@patch("app.main.fire_and_forget")
-@patch("app.main.get_sessions")
+@patch("app.services.session_service.session_service.cleanup_deleted_sessions", new_callable=AsyncMock)
+@patch("app.routers.sessions.fire_and_forget")
+@patch("app.services.session_service.session_service.get_sessions", new_callable=AsyncMock)
 def test_get_sessions_endpoint(mock_get, mock_fire, mock_cleanup):
     mock_auth()
     mock_get.return_value = [{"id": "1", "title": "Chat 1"}]
@@ -60,15 +60,12 @@ def test_get_sessions_endpoint(mock_get, mock_fire, mock_cleanup):
     mock_cleanup.assert_called_once_with("testuser")
     mock_fire.assert_called_once()
 
-@patch("app.main.agy_client")
-@patch("app.main.get_session_title")
-@patch("app.main.check_session_exists")
-@patch("app.main.get_session_history")
-def test_get_history_endpoint(mock_history, mock_exists, mock_title, mock_agy):
+@patch("app.services.agy_service.agy_service.generate_chat_icon", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_title", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.check_session_exists", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_history", new_callable=AsyncMock)
+def test_get_history_endpoint(mock_history, mock_exists, mock_title, mock_icon):
     mock_auth()
-    async def mock_icon(*args, **kwargs):
-        pass
-    mock_agy.generate_chat_icon.side_effect = mock_icon
     mock_exists.return_value = True
     mock_title.return_value = "Test"
     mock_history.return_value = [{"text": "Hi", "is_user": True, "image_urls": [], "images": None, "files": None, "timestamp": None}]
@@ -77,13 +74,13 @@ def test_get_history_endpoint(mock_history, mock_exists, mock_title, mock_agy):
     assert response.json() == [{"text": "Hi", "is_user": True, "image_urls": [], "images": None, "files": None, "timestamp": None}]
     mock_history.assert_called_once_with("testuser", "sess-123")
 
-@patch("app.main.agy_client")
-@patch("app.main.get_session_history")
-@patch("app.main.save_session_message")
-@patch("app.main.get_session_title")
-@patch("app.main.check_session_exists")
-@patch("app.main.update_session_title")
-@patch("app.main.get_session_settings")
+@patch("app.services.chat_service.chat_service.agy_service")
+@patch("app.services.session_service.session_service.get_session_history", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.save_session_message", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_title", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.check_session_exists", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.update_session_title", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_settings", new_callable=AsyncMock)
 def test_chat_endpoint_text_only(mock_get_settings, mock_update_title, mock_exists, mock_title, mock_save_msg, mock_get_history, mock_agy_client):
     mock_auth()
     mock_get_history.return_value = []
@@ -121,13 +118,13 @@ def test_chat_endpoint_text_only(mock_get_settings, mock_update_title, mock_exis
     assert user_msg_call["text"] == "Ich habe Pizza gegessen"
     assert user_msg_call["is_user"] is True
 
-@patch("app.main.agy_client")
-@patch("app.main.get_session_history")
-@patch("app.main.save_session_message")
-@patch("app.main.get_session_title")
-@patch("app.main.check_session_exists")
-@patch("app.main.update_session_title")
-@patch("app.main.get_session_settings")
+@patch("app.services.chat_service.chat_service.agy_service")
+@patch("app.services.session_service.session_service.get_session_history", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.save_session_message", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_title", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.check_session_exists", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.update_session_title", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_settings", new_callable=AsyncMock)
 def test_chat_endpoint_with_image(mock_get_settings, mock_update_title, mock_exists, mock_title, mock_save_msg, mock_get_history, mock_agy_client):
     mock_auth()
     mock_get_history.return_value = []
@@ -170,8 +167,8 @@ def test_chat_endpoint_with_image(mock_get_settings, mock_update_title, mock_exi
     assert user_msg_call["images"][0]["width"] == 1
     assert user_msg_call["images"][0]["height"] == 1
 
-@patch("app.main.delete_session")
-@patch("app.main.check_session_exists")
+@patch("app.services.session_service.session_service.delete_session", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.check_session_exists", new_callable=AsyncMock)
 def test_delete_session_endpoint(mock_exists, mock_delete_session):
     mock_auth()
     mock_exists.side_effect = lambda u, s: s == "sess-123"
@@ -185,8 +182,8 @@ def test_delete_session_endpoint(mock_exists, mock_delete_session):
     response = client.delete("/api/sessions/unknown")
     assert response.status_code == 404
 
-@patch("app.main.check_session_exists")
-@patch("app.main.get_session_settings")
+@patch("app.services.session_service.session_service.check_session_exists", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_settings", new_callable=AsyncMock)
 def test_get_settings_endpoint(mock_get_settings, mock_exists):
     mock_auth()
     mock_exists.return_value = True
@@ -196,8 +193,8 @@ def test_get_settings_endpoint(mock_get_settings, mock_exists):
     assert response.json() == {"prompt": "Test prompt", "include_gps": True}
     mock_get_settings.assert_called_once_with("testuser", "sess-123")
 
-@patch("app.main.check_session_exists")
-@patch("app.main.update_session_settings")
+@patch("app.services.session_service.session_service.check_session_exists", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.update_session_settings", new_callable=AsyncMock)
 def test_update_settings_endpoint(mock_update_settings, mock_exists):
     mock_auth()
     mock_exists.return_value = True
@@ -206,11 +203,11 @@ def test_update_settings_endpoint(mock_update_settings, mock_exists):
     assert response.json() == {"success": True}
     mock_update_settings.assert_called_once_with("testuser", "sess-123", "New prompt", True)
 
-@patch("app.main.os.path.exists")
+@patch("app.routers.files.os.path.exists")
 def test_uploads_endpoint(mock_exists):
     mock_auth()
     mock_exists.return_value = True
-    with patch("app.main.FileResponse") as mock_fileresponse:
+    with patch("app.routers.files.FileResponse") as mock_fileresponse:
         mock_fileresponse.return_value = MagicMock()
         response = client.get("/uploads/123/test.jpg")
         assert response.status_code == 200
@@ -219,10 +216,10 @@ def test_uploads_endpoint(mock_exists):
         assert "123" in mock_fileresponse.call_args[0][0]
         assert mock_fileresponse.call_args[0][0].endswith("test.jpg")
 
-@patch("app.main.update_session_title")
-@patch("app.main.check_session_exists")
-@patch("app.main.agy_client")
-def test_update_title_endpoint(mock_agy_client, mock_exists, mock_update_title):
+@patch("app.services.agy_service.agy_service")
+@patch("app.services.session_service.session_service.check_session_exists", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.update_session_title", new_callable=AsyncMock)
+def test_update_title_endpoint(mock_update_title, mock_exists, mock_agy_client):
     mock_auth()
     
     async def mock_generate_icon(*args, **kwargs):
@@ -236,7 +233,7 @@ def test_update_title_endpoint(mock_agy_client, mock_exists, mock_update_title):
     assert response.json() == {"success": True}
     mock_update_title.assert_called_once_with("testuser", "sess-123", "New Title")
 
-@patch("app.main.check_session_exists")
+@patch("app.services.session_service.session_service.check_session_exists", new_callable=AsyncMock)
 def test_update_title_endpoint_not_found(mock_exists):
     mock_auth()
     mock_exists.return_value = False
@@ -244,13 +241,13 @@ def test_update_title_endpoint_not_found(mock_exists):
     response = client.put("/api/sessions/sess-123/title", json={"title": "New Title"})
     assert response.status_code == 404
 
-@patch("app.main.agy_client")
-@patch("app.main.get_session_history")
-@patch("app.main.save_session_message")
-@patch("app.main.get_session_title")
-@patch("app.main.check_session_exists")
-@patch("app.main.update_session_title")
-@patch("app.main.get_session_settings")
+@patch("app.services.chat_service.chat_service.agy_service")
+@patch("app.services.session_service.session_service.get_session_history", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.save_session_message", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_title", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.check_session_exists", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.update_session_title", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_settings", new_callable=AsyncMock)
 def test_chat_endpoint_with_location(mock_get_settings, mock_update_title, mock_exists, mock_title, mock_save_msg, mock_get_history, mock_agy_client):
     mock_auth()
     mock_get_history.return_value = []
@@ -290,13 +287,13 @@ def test_chat_endpoint_with_location(mock_get_settings, mock_update_title, mock_
     call_kwargs = mock_agy_client.process_message.call_args.kwargs
     assert "Lat: 48.0, Lon: 11.0" in call_kwargs["system_prompt"]
 
-@patch("app.main.agy_client")
-@patch("app.main.get_session_history")
-@patch("app.main.save_session_message")
-@patch("app.main.get_session_title")
-@patch("app.main.check_session_exists")
-@patch("app.main.update_session_title")
-@patch("app.main.get_session_settings")
+@patch("app.services.chat_service.chat_service.agy_service")
+@patch("app.services.session_service.session_service.get_session_history", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.save_session_message", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_title", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.check_session_exists", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.update_session_title", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_settings", new_callable=AsyncMock)
 def test_image_upload_without_extension_fallback(mock_get_settings, mock_update_title, mock_exists, mock_title, mock_save_msg, mock_get_history, mock_agy_client):
     mock_auth()
     mock_get_history.return_value = []
@@ -325,13 +322,13 @@ def test_image_upload_without_extension_fallback(mock_get_settings, mock_update_
     # Must end with a valid image extension like .jpg or .png, not empty
     assert image_url.endswith(".jpg") or image_url.endswith(".png")
 
-@patch("app.main.agy_client")
-@patch("app.main.get_session_history")
-@patch("app.main.save_session_message")
-@patch("app.main.get_session_title")
-@patch("app.main.check_session_exists")
-@patch("app.main.update_session_title")
-@patch("app.main.get_session_settings")
+@patch("app.services.chat_service.chat_service.agy_service")
+@patch("app.services.session_service.session_service.get_session_history", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.save_session_message", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_title", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.check_session_exists", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.update_session_title", new_callable=AsyncMock)
+@patch("app.services.session_service.session_service.get_session_settings", new_callable=AsyncMock)
 def test_chat_with_image_only_no_text(mock_get_settings, mock_update_title, mock_exists, mock_title, mock_save_msg, mock_get_history, mock_agy_client):
     mock_auth()
     mock_get_history.return_value = []
@@ -342,9 +339,9 @@ def test_chat_with_image_only_no_text(mock_get_settings, mock_update_title, mock
     async def mock_process(*args, **kwargs):
         return {"reply": "Reines Bild analysiert", "context_truncated": False}
     mock_agy_client.process_message.side_effect = mock_process
-    async def mock_icon(*args, **kwargs):
+    async def mock_generate_icon(*args, **kwargs):
         pass
-    mock_agy_client.generate_chat_icon.side_effect = mock_icon
+    mock_agy_client.generate_chat_icon.side_effect = mock_generate_icon
 
     import base64
     png_data = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=")
@@ -358,7 +355,7 @@ def test_chat_with_image_only_no_text(mock_get_settings, mock_update_title, mock
     assert user_msg_call["is_user"] is True
     assert len(user_msg_call["images"]) == 1
 
-@patch("app.main.check_session_exists")
+@patch("app.services.session_service.session_service.check_session_exists", new_callable=AsyncMock)
 def test_chat_endpoint_max_images_limit(mock_exists):
     mock_auth()
     mock_exists.return_value = True

@@ -8,26 +8,6 @@ def agy_service():
     return AGYService()
 
 @pytest.mark.asyncio
-async def test_agy_service_estimate_tokens(agy_service):
-    tokens = agy_service.estimate_tokens("Hello world from unit test")
-    assert tokens > 0
-    assert agy_service.estimate_tokens("") == 0
-
-@pytest.mark.asyncio
-async def test_agy_service_prune_history(agy_service):
-    messages = [
-        {"text": "msg 1", "is_user": True},
-        {"text": "msg 2", "is_user": False},
-        {"text": "msg 3", "is_user": True},
-        {"text": "msg 4", "is_user": False}
-    ]
-    # Small budget to force pruning
-    pruned, was_truncated = agy_service.prune_history_to_token_budget(messages, max_tokens=2)
-    assert was_truncated is True
-    assert len(pruned) < len(messages)
-
-@pytest.mark.asyncio
-@pytest.mark.asyncio
 async def test_agy_service_generate_chat_icon(agy_service, tmp_path):
     target_path = str(tmp_path / "icon.svg")
     

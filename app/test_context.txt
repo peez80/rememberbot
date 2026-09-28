@@ -1,2 +1,0 @@
-User: Was ist die Hauptstadt von Frankreich?
-AI: Paris.

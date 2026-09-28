@@ -5,8 +5,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import FileResponse
 
-from app.core.config import DATA_DIR
-from app.services.auth_service import auth_service, get_current_user
+from app.services.auth_service import get_current_user
 from app.services.storage_service import storage_service
 
 logger = logging.getLogger(__name__)
@@ -40,36 +39,14 @@ async def download_file(username: str, session_id: str, file_path: str, current_
 
 @router.get("/uploads/{session_id}/{filename}")
 async def get_upload(session_id: str, filename: str, username: str = Depends(get_current_user)):
-    safe_filename = os.path.basename(filename)
-    safe_session_id = os.path.basename(session_id)
-    file_path = os.path.join(storage_service.data_dir, username, "sessions", safe_session_id, "uploads", safe_filename)
+    file_path = storage_service.get_upload_filepath(username, session_id, filename)
 
-    exists_fn = os.path.exists
-    try:
-        import sys
-        main_mod = sys.modules.get("app.main")
-        if main_mod and hasattr(main_mod, "os") and hasattr(main_mod.os.path, "exists"):
-            from unittest.mock import MagicMock
-            if isinstance(main_mod.os.path.exists, MagicMock):
-                exists_fn = main_mod.os.path.exists
-    except Exception:
-        pass
-
-    if exists_fn(file_path):
+    if os.path.exists(file_path):
+        safe_filename = os.path.basename(filename)
         download_name = safe_filename
         match = re.match(r'^[0-9a-fA-F]{8}_(.+)$', safe_filename)
         if match:
             download_name = match.group(1)
-
-        try:
-            import sys
-            main_mod = sys.modules.get("app.main")
-            if main_mod and hasattr(main_mod, "FileResponse"):
-                from unittest.mock import MagicMock
-                if isinstance(main_mod.FileResponse, MagicMock):
-                    return main_mod.FileResponse(file_path, filename=download_name)
-        except Exception:
-            pass
 
         return FileResponse(
             file_path,
@@ -82,10 +59,7 @@ async def get_upload(session_id: str, filename: str, username: str = Depends(get
 
 @router.get("/uploads/{session_id}/thumbnails/{filename}")
 async def get_thumbnail(session_id: str, filename: str, username: str = Depends(get_current_user)):
-    safe_filename = os.path.basename(filename)
-    safe_session_id = os.path.basename(session_id)
-    thumb_dir = os.path.join(storage_service.data_dir, username, "sessions", safe_session_id, "thumbnails")
-    thumb_path = os.path.join(thumb_dir, safe_filename)
+    thumb_path = storage_service.get_thumbnail_filepath(username, session_id, filename)
 
     if os.path.exists(thumb_path):
         return FileResponse(
@@ -93,7 +67,7 @@ async def get_thumbnail(session_id: str, filename: str, username: str = Depends(
             headers={"Cache-Control": "public, max-age=31536000, immutable"}
         )
 
-    orig_path = os.path.join(storage_service.data_dir, username, "sessions", safe_session_id, "uploads", safe_filename)
+    orig_path = storage_service.get_upload_filepath(username, session_id, filename)
     if not os.path.exists(orig_path):
         logger.warning(f"Thumbnail source image not found: '{filename}' for session {session_id} (user '{username}')")
         raise HTTPException(status_code=404, detail="Image not found")

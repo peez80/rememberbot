@@ -15,5 +15,3 @@ services:
       - LOG_LEVEL=DEBUG
       - AGY_DEFAULT_MODEL=gemini-3.8-flash
       - AGY_DEFAULT_THINKING_EFFORT=medium
-volumes:
-  rememberbot_data:
