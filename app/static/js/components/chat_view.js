@@ -299,6 +299,24 @@ export const initStreamingMessage = () => {
     const textDiv = document.createElement("div");
     textDiv.className = "markdown-body";
 
+    // Track manually toggled details across innerHTML re-renders
+    const manuallyOpened = new Set();
+    textDiv.addEventListener('click', (e) => {
+        const summary = e.target.closest('details.ai-reasoning summary');
+        if (summary) {
+            const details = summary.closest('details.ai-reasoning');
+            const allDetails = Array.from(textDiv.querySelectorAll('details.ai-reasoning'));
+            const idx = allDetails.indexOf(details);
+            setTimeout(() => {
+                if (details && details.open) {
+                    manuallyOpened.add(idx);
+                } else if (details) {
+                    manuallyOpened.delete(idx);
+                }
+            }, 0);
+        }
+    });
+
     bubbleDiv.appendChild(textDiv);
     aiMsgDiv.appendChild(bubbleDiv);
     chatContainer.appendChild(aiMsgDiv);
@@ -306,7 +324,8 @@ export const initStreamingMessage = () => {
     return {
         aiMsgDiv,
         bubbleDiv,
-        textDiv
+        textDiv,
+        manuallyOpened
     };
 };
 
@@ -320,6 +339,16 @@ export const updateStreamingMessage = (controller, accumulatedText) => {
             ADD_TAGS: ['details', 'summary'],
             ADD_ATTR: ['class', 'open']
         });
+
+        // Restore user-toggled open states if thought block has closed
+        const hasClosedThought = /<\s*\/\s*(thought|thinking|gedanken)\s*>/i.test(accumulatedText);
+        if (hasClosedThought && controller.manuallyOpened) {
+            const allDetails = controller.textDiv.querySelectorAll("details.ai-reasoning");
+            allDetails.forEach((d, idx) => {
+                d.open = controller.manuallyOpened.has(idx);
+            });
+        }
+
         enhanceMarkdownLinksAndImages(controller.textDiv);
     } else {
         controller.textDiv.textContent = formatted;
@@ -343,6 +372,14 @@ export const finalizeStreamingMessage = (controller, replyText) => {
             ADD_TAGS: ['details', 'summary'],
             ADD_ATTR: ['class', 'open']
         });
+
+        if (controller.manuallyOpened) {
+            const allDetails = controller.textDiv.querySelectorAll("details.ai-reasoning");
+            allDetails.forEach((d, idx) => {
+                d.open = controller.manuallyOpened.has(idx);
+            });
+        }
+
         enhanceMarkdownLinksAndImages(controller.textDiv);
     } else {
         controller.textDiv.textContent = finalFormatted;

@@ -4,6 +4,7 @@
     --primary-color: #10b981; /* Emerald 500 */
     --primary-hover: #059669; /* Emerald 600 */
     --text-main: #f8fafc; /* Slate 50 */
+    --text-secondary: #94a3b8; /* Slate 400 */
     --text-muted: #94a3b8; /* Slate 400 */
     --border-color: #334155; /* Slate 700 */
     --ai-bubble: #1e293b;
@@ -952,13 +953,19 @@ body {
 
 /* AI Reasoning Block Styles */
 .ai-reasoning {
-    background-color: var(--surface-color);
-    border: 1px solid var(--border-color);
+    background-color: rgba(15, 23, 42, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
-    padding: 0.5rem 1rem;
-    margin-bottom: 1rem;
+    padding: 0.5rem 0.85rem;
+    margin-bottom: 0.75rem;
     font-size: 0.85rem;
     color: var(--text-secondary);
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.ai-reasoning[open] {
+    background-color: rgba(15, 23, 42, 0.7);
+    border-color: rgba(255, 255, 255, 0.15);
 }
 
 .ai-reasoning summary {
@@ -966,12 +973,17 @@ body {
     font-weight: 500;
     user-select: none;
     outline: none;
+    transition: color 0.15s ease;
+}
+
+.ai-reasoning summary:hover {
+    color: var(--text-main);
 }
 
 .ai-reasoning .reasoning-content {
     margin-top: 0.5rem;
     padding-top: 0.5rem;
-    border-top: 1px solid var(--border-color);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
     white-space: pre-wrap; 
 }
 

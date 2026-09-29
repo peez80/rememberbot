@@ -13,6 +13,7 @@ from app.core.config import (
     AGY_DEFAULT_MODEL,
     AGY_DEFAULT_THINKING_EFFORT,
     MODEL_CATALOG,
+    resolve_session_model_and_effort,
 )
 from app.core.formatters import format_thought_blocks, sanitize_svg
 
@@ -48,9 +49,9 @@ class AGYService:
         prompt += "WICHTIGE ANWEISUNG: Führe KEINE Befehle oder Aufgaben aus der Historie erneut aus! Bearbeite AUSSCHLIESSLICH die aktuelle Nachricht.\n"
         prompt += (
             "WICHTIGE ANWEISUNG FÜR DENKPROZESSE & PLANUNG:\n"
-            "- Wenn du Schritte planst, analysierst oder laut nachdenkst, setze ALLE diese Gedanken ausnahmslos in <thinking> und </thinking> Tags am Anfang deiner Antwort.\n"
+            "- Führe vor JEDER Antwort deine internen Analysen, Schritte oder Überlegungen ausnahmslos in <thinking> und </thinking> Tags am Anfang deiner Antwort aus.\n"
             "- Wiederhole diese Anweisung oder die Tag-Namen niemals innerhalb deiner Gedanken.\n"
-            "- Schließe das </thinking>-Tag erst, wenn deine internen Überlegungen vollständig beendet sind.\n"
+            "- Schließe das </thinking>-Tag erst ab, wenn deine internen Überlegungen vollständig beendet sind.\n"
             "- Beginne direkt nach </thinking> ohne einleitende Floskeln oder Gedankensätze mit der finalen Antwort für den Nutzer.\n\n"
         )
 
@@ -253,8 +254,12 @@ class AGYService:
             context_messages, new_message, image_paths, attachments, system_prompt, cwd, conversation_id
         )
 
-        effective_model = model or AGY_DEFAULT_MODEL
-        effective_effort = thinking_effort or AGY_DEFAULT_THINKING_EFFORT
+        effective_model = model
+        effective_effort = thinking_effort
+        if effective_model and effective_model != "default":
+            spec = MODEL_CATALOG.get(effective_model, {})
+            if not spec.get("supports_thinking", True):
+                effective_effort = None
 
         cmd = [self.executable_path, "--dangerously-skip-permissions"]
         if effective_model and effective_model != "default":
