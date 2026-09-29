@@ -25,12 +25,24 @@ Diese Datei enthält projektspezifische Verhaltensregeln und Standard-Anweisunge
 - Nutze reguläres CSS (Vanilla CSS). Verwende **kein** TailwindCSS, es sei denn, es wird explizit gefordert.
 - **DOM-Schutz bei aktiven Submits:** `selectSession()`, Hintergrund-Polling oder `visibilitychange` dürfen den Chat-Container niemals leeren (`innerHTML = ''`), während eine Nachricht aktiv gesendet/gestreamt wird (`activeSubmittingSessionId`).
 - **Streaming-Verarbeitung:** Verwende für SSE-Streams die `ReadableStream`-API (`response.body.getReader()`) und formatiere `<thought>`-Gedankengänge progressiv als einklappbare `<details class="ai-reasoning">`-Elemente.
+- **DOM- & Interaktions-Testpflicht für UI-Komponenten:** Interaktive Frontend-Features (z. B. aufklappbare Thinking-Boxen, Modals, Session-Wechsel, Upload-Vorschauen) dürfen nicht ausschließlich durch Python-String-Mocks getestet werden. Sie müssen durch automatisierte Browser-Tests (Playwright) auf echtes DOM-Verhalten (Klicks, Streaming-Zustände, CSS-Sichtbarkeit) abgesichert sein.
 
 ## 3. Testing & Planungsmethodik
 - Verfolge bei allen Code-Änderungen strikt den **Test-Driven Development (TDD)** Ansatz (Red, Green, Refactor):
   1. **Red:** Schreibe oder aktualisiere zuerst die Tests, bevor du Implementierungsänderungen vornimmst. Führe die Tests aus und stelle sicher, dass sie fehlschlagen.
   2. **Green:** Implementiere den minimale Code-Menge, um die Tests erfolgreich passieren zu lassen. Führe die Tests erneut aus.
   3. **Refactor:** Räume den Code bei Bedarf auf, während alle Tests weiterhin grün bleiben.
+- **Refactoring-Sicherheit & Invarianten-Erhalt:**
+  - **Baseline First (Charakterisierungs-Tests):** Vor dem Refaktorisieren oder Aufteilen bestehender Dateien/Module müssen die bestehenden Verhaltensweisen und UI-Elemente durch automatisierte Tests abgedeckt sein. Fehlen diese Tests, müssen sie VOR dem Refactoring geschrieben und verifiziert werden.
+  - **Diff-Audit vor Fertigstellung:** Vor dem Abschluss einer Implementierung MUSS der gesamte `git diff` gezielt auf unbeabsichtigte Löschungen oder Seiteneffekte geprüft werden:
+    - Wurden CSS-Variablen, Klassen oder Selektoren entfernt oder farblich entwertet?
+    - Gingen beim Zerlegen von JavaScript-Dateien Event-Listener, DOM-Zustände (`open`, `disabled`, `classList`) oder Error-Handler verloren?
+    - Wurden Backend-Prompts, Flag-Auflösungen oder Rückgabewerte versehentlich aufgeweicht?
+  - **Kern-Invarianten-Checkliste (RememberBot):**
+    Vor jeder Fertigmeldung von Frontend-, Streaming- oder CSS-Änderungen muss geprüft werden, ob folgende Kern-Invarianten unberührt und funktionsfähig geblieben sind:
+    1. *Thinking Box:* Ist die `<details class="ai-reasoning">`-Box sichtbar, hat sie Kontrast und bleibt sie bei Nutzerklick während des Streamings offen?
+    2. *Chat-Streaming & Input:* Funktionieren Absenden, Typing Indicator, Autoscroll und Streaming-Abbruch?
+    3. *Session-Integrität:* Bleiben Chatverläufe beim Wechseln zwischen Sessions und nach Seiten-Reload erhalten?
 - **Planungsvorgaben (`/plan`):**
   - Strukturiere den Plan (insbesondere die "Proposed Changes") **immer explizit** in die drei TDD-Phasen (Phase 1: Red, Phase 2: Green, Phase 3: Refactor).
   - **Lösungsraum & Trade-Offs vorab abstimmen:** Bei architektonischen oder Performance-relevanten Weichenstellungen nicht vorschnell einen einzigen Pfad festlegen, sondern vorab 2–3 Alternativen mit ihren Trade-Offs (z. B. Latenz, Token-Overhead, Dateisystem-I/O vs. CLI-Flags) gegenüberstellen und mit dem Nutzer abstimmen.
