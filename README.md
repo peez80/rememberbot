@@ -108,12 +108,45 @@ The project uses GitHub Actions for continuous integration and deployment with a
 
 ## Testing
 
-The project uses `pytest` and `Playwright` for automated testing, including unit tests, API integration tests, and end-to-end (E2E) browser tests.
+The project uses `pytest` and `Playwright` for automated testing. Tests are cleanly separated into three tiers with corresponding directories and `pytest` markers:
 
-To run the test suite, use Docker Compose to execute `pytest` within the container environment:
+- **Unit Tests (`tests/unit/`, marker: `unit`)**: Fast, isolated tests (<3s) for domain models, services, formatters, tasks, and CLI parsing without external services or browsers.
+- **Integration Tests (`tests/integration/`, marker: `integration`)**: In-process API tests (<25s) using FastAPI `TestClient` / `AsyncClient` for routing, security middleware, file uploads, caching headers, and rate limiting.
+- **End-to-End Tests (`tests/e2e/`, marker: `e2e`)**: Playwright browser tests (~1-2m) verifying live UI behavior, thinking boxes, progressive streaming rendering, DOM persistence, and user concurrency in headless Chromium.
 
+### Running Tests
+
+Use Docker Compose to execute `pytest` within the container environment:
+
+**Run all tests:**
 ```bash
 docker compose run --rm web pytest tests/
+```
+
+**Run only fast Unit Tests (<3s):**
+```bash
+docker compose run --rm web pytest tests/unit
+# or via marker:
+docker compose run --rm web pytest -m unit
+```
+
+**Run API & Integration Tests:**
+```bash
+docker compose run --rm web pytest tests/integration
+# or via marker:
+docker compose run --rm web pytest -m integration
+```
+
+**Run all fast tests (Unit + Integration, without browser):**
+```bash
+docker compose run --rm web pytest -m "not e2e"
+```
+
+**Run only Playwright E2E Browser Tests:**
+```bash
+docker compose run --rm web pytest tests/e2e
+# or via marker:
+docker compose run --rm web pytest -m e2e
 ```
 
 > [!TIP]
@@ -122,22 +155,5 @@ docker compose run --rm web pytest tests/
 > docker compose run --rm --net=host web pytest tests/
 > ```
 
-This will run all tests (both unit tests and Playwright E2E browser tests) together:
-- Centralized error logging, observability & exception handlers (`tests/test_logging.py`)
-- User authentication, session cookies & brute-force rate-limiting (`tests/test_auth.py`, `tests/test_services_auth.py`)
-- Local storage logic, thumbnail creation & $O(1)$ session lookups (`tests/test_storage.py`, `tests/test_performance_storage.py`, `tests/test_services_storage.py`, `tests/test_services_session.py`)
-- Hybrid model & thinking effort configuration, validation, CLI flags (`tests/test_model_and_thinking_configuration.py`)
-- API endpoints, upload thumbnail routing & caching headers (`tests/test_main.py`, `tests/test_upload_thumbnails_and_caching.py`, `tests/test_thinking_status.py`, `tests/test_chat_stability.py`, `tests/test_streaming.py`)
-- Session ZIP export, import & ZipSlip security remediation (`tests/test_session_export_import.py`, `tests/test_security_remediation.py`, `tests/test_session_export_import_e2e.py`)
-- Cache-busting query strings & static asset revalidation (`tests/test_caching_and_cache_busters.py`)
-- Progressive rendering, thumbnail links & infinite scroll integrity (`tests/test_progressive_rendering.py`, `tests/test_scroll_button.py`, `tests/test_lazy_loading.py`)
-- `agy` CLI interaction, streaming and JSON parsing (`tests/test_agy_client.py`, `tests/test_services_agy.py`, `tests/test_streaming.py`)
-- End-to-End browser UI interactions, concurrency and live streaming via Playwright (`tests/test_scroll_e2e.py`, `tests/test_thinking_animation_e2e.py`, `tests/test_visibility_sync_e2e.py`, `tests/test_chat_stability.py`, `tests/test_ui_concurrency_e2e.py`, `tests/test_streaming.py`, `tests/test_lazy_loading_e2e.py`, `tests/test_session_export_import_e2e.py`)
-
-To run only the Playwright E2E browser tests:
-
-```bash
-docker compose run --rm web pytest -k "e2e"
-```
 
 

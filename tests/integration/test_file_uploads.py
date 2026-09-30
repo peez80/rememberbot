@@ -297,7 +297,7 @@ def test_single_image_upload_not_duplicated(mock_get_settings, mock_update_title
 
 
 def test_frontend_main_js_no_duplicate_image_append():
-    main_js_path = os.path.join(os.path.dirname(__file__), "..", "app", "static", "js", "main.js")
+    main_js_path = os.path.join(os.path.dirname(__file__), "..", "..", "app", "static", "js", "main.js")
     with open(main_js_path, "r", encoding="utf-8") as f:
         content = f.read()
 

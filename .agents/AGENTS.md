@@ -48,9 +48,9 @@ Diese Datei enthält projektspezifische Verhaltensregeln und Standard-Anweisunge
   - **Lösungsraum & Trade-Offs vorab abstimmen:** Bei architektonischen oder Performance-relevanten Weichenstellungen nicht vorschnell einen einzigen Pfad festlegen, sondern vorab 2–3 Alternativen mit ihren Trade-Offs (z. B. Latenz, Token-Overhead, Dateisystem-I/O vs. CLI-Flags) gegenüberstellen und mit dem Nutzer abstimmen.
   - **Historischen Kontext & Altdaten hinterfragen:** Vor früheren Architekturentscheidungen innehalten (z. B. warum eine Datei statt CLI-Prompt genutzt wurde -> Vermeidung von `ARG_MAX`-Limits). Systematisch prüfen: Was passiert mit bereits existierenden Sessions, importierten ZIP-Dateien oder leeren Anfangszuständen? Keine voreiligen Vereinfachungen (wie Abschneiden/Truncation), wenn voller Kontext benötigt wird.
   - **Mentale Simulation (Schrittweiser Walkthrough):** Vor der finalen Genehmigung des Plans den Datenfluss und Lifecycle für alle konkreten Szenarien gedanklich Schritt für Schritt durchspielen (z. B. Turn 1 neue Session, Turn 2+ neue Session, bestehende Session Turn 1 Seeding, bestehende Session Turn 2+, Fallback bei gelöschtem State). Erst wenn alle Pfade gedanklich fehlerfrei aufgehen, den Plan zur Freigabe vorlegen.
-- Wenn neuer Code geschrieben wird, erstelle oder erweitere immer direkt die passenden Unit-Tests im `tests/` Ordner.
+- Wenn neuer Code geschrieben wird, erstelle oder erweitere immer direkt die passenden Tests im entsprechenden Ordner (`tests/unit/`, `tests/integration/` oder `tests/e2e/`).
 - **Logging-Verifikation:** Teste Fehlerbehandlungs-Routen und Ausnahme-Pfade mit dem Pytest-Fixture `caplog`, um sicherzustellen, dass die definierten Log-Einträge im Fehlerfall zuverlässig generiert werden.
-- Test-Framework ist `pytest`.
+- Test-Framework ist `pytest`. Die Test-Suite ist in 3 Ebenen unterteilt (`unit/`, `integration/`, `e2e/`), die auch über Marker (`pytest -m unit`, `-m integration`, `-m e2e`) angesprochen werden können.
 
 ## 4. Allgemeine Richtlinien
 - Bewahre die Integrität bestehender Kommentare und Docstrings, es sei denn, der Code ändert sich grundlegend.
@@ -61,7 +61,7 @@ Diese Datei enthält projektspezifische Verhaltensregeln und Standard-Anweisunge
 ## 5. Ausführung & Umgebung
 - Führe **alle** Befehle (wie Tests, Skripte, Applikationsstart) immer streng über `docker compose` bzw. im Container aus. 
 - Nutze auf dem Host-System keine nativen Tools wie `uv`, lokales `pip` oder lokales `python`.
-- Beispiel für Tests: `docker compose run --rm web pytest tests/`
+- Beispiel für Tests: `docker compose run --rm web pytest tests/unit` (Unit), `docker compose run --rm web pytest tests/integration` (API/Integration), `docker compose run --rm web pytest tests/e2e` (E2E Browser), oder `docker compose run --rm web pytest tests/` (Gesamtsuite).
 - **WSL & Test-Performance / Netzwerk-Hinweis:** Frage den Nutzer einmalig pro Session, ob er aktuell in WSL mit der CLI unterwegs ist. Falls ja, müssen Tests bzw. Container mit `network=host` (bzw. `--net=host`) gestartet werden (z. B. `docker compose run --rm --net=host web pytest tests/`), da sich die Tests andernfalls wegen NAT'ing-Problemen zwischen WSL und Docker-Container nicht beenden und ewig hängen.
 
 

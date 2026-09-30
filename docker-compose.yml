@@ -8,6 +8,7 @@ services:
     volumes:
       - ./app:/app/app
       - ./tests:/app/tests
+      - ./pytest.ini:/app/pytest.ini
       - ./_rememberbot_data:/app/data
       - ~/.gemini/antigravity-cli:/root/.gemini/antigravity-cli
     environment:
