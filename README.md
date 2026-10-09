@@ -58,9 +58,10 @@ The application is fully containerized and can be started with Docker Compose:
 Data such as logged conversations and parsed information are stored in the local `_rememberbot_data` directory, which is mapped into the container. The data is stored isolated in separate subfolders for each user (e.g., `data/alice/sessions`).
 
 ### User Management
-The application supports multi-user authentication without self-registration through modular user backends.
-- By default, the `json` backend reads users and passwords from `users.json` located under `data/config/users.json` (or `_rememberbot_data/config/users.json` when running via Docker Compose).
-- The active backend is selectable via the `USER_BACKEND` environment variable (`json` or `file`).
+The application supports multi-user authentication without self-registration through modular user backends (`USER_BACKEND` environment variable).
+
+#### 1. File-based Backend (`USER_BACKEND=json` or `file`)
+- Reads users and passwords from `users.json` located under `data/config/users.json` (or `_rememberbot_data/config/users.json` when running via Docker Compose).
 - A custom path to the users file can optionally be specified via `USERS_FILE_PATH`.
 
 Example `users.json`:
@@ -70,8 +71,25 @@ Example `users.json`:
   "bob": "password"
 }
 ```
+
 > [!WARNING]
-> **Security Note:** Passwords in `users.json` are currently stored in plain text. This authentication mechanism is intended for local or personal use only. Do not use this in a public-facing or production environment without adding proper password hashing.
+> **Security Note:** Passwords in `users.json` are stored in plain text. This authentication mechanism is intended for local or personal use only.
+
+#### 2. OpenID Connect & OAuth 2.0 Backend (`USER_BACKEND=oauth`, `oidc`, or `nextcloud`)
+- Connects to any standard OpenID Connect (OIDC) or OAuth 2.0 identity provider, including **Nextcloud** (with the *OpenID Connect Provider* app), **Keycloak**, **Authentik**, **Zitadel**, **GitLab**, or **Google**.
+- Employs **PKCE (RFC 7636)** and cryptographically secure state cookies for CSRF protection.
+- Automatically resolves endpoints via OIDC Discovery (`/.well-known/openid-configuration` or `/index.php/.well-known/openid-configuration`).
+- Hides the password login form and provides a single-click SSO button in the UI (`Mit Nextcloud anmelden` / `Mit SSO anmelden`).
+
+Example `.env` configuration for Nextcloud OIDC:
+```env
+USER_BACKEND=oauth
+OAUTH_CLIENT_ID=your-nextcloud-client-id
+OAUTH_CLIENT_SECRET=your-nextcloud-client-secret
+OAUTH_ISSUER_URL=https://nextcloud.example.com
+OAUTH_REDIRECT_URI=https://rememberbot.example.com/api/auth/oauth/callback
+OAUTH_PROVIDER_NAME=Nextcloud
+```
 
 ## Architecture
 

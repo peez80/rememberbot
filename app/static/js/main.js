@@ -800,11 +800,46 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
-    // Initial Auth Check
+    // Initial Auth Check and Error Handling
     (async () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const errorParam = urlParams.get("error");
+        if (errorParam) {
+            const errorBanner = document.getElementById("auth-error-banner");
+            if (errorBanner) {
+                let errorMsg = "Fehler bei der Anmeldung.";
+                if (errorParam === "oauth_access_denied" || errorParam === "access_denied") {
+                    errorMsg = "Anmeldung abgebrochen: Zugriff am Identity-Provider verweigert.";
+                } else if (errorParam === "state_mismatch") {
+                    errorMsg = "Sicherheitsfehler: Die Sitzung ist ungültig oder abgelaufen. Bitte erneut versuchen.";
+                } else if (errorParam === "oauth_failed") {
+                    errorMsg = "Fehler bei der Authentifizierung am Identity-Provider.";
+                }
+                errorBanner.textContent = errorMsg;
+                errorBanner.style.display = "block";
+            }
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
+
         try {
             const data = await api.checkAuthStatus();
+            const authForm = document.getElementById("auth-form");
+            const oauthContainer = document.getElementById("oauth-login-container");
+            const oauthLabel = document.getElementById("oauth-login-label");
+
             if (!data.authenticated) {
+                if (data.oauth_configured) {
+                    if (authForm) authForm.style.display = "none";
+                    if (oauthContainer) {
+                        oauthContainer.style.display = "block";
+                        if (oauthLabel && data.provider_name) {
+                            oauthLabel.textContent = `Mit ${data.provider_name} anmelden`;
+                        }
+                    }
+                } else {
+                    if (authForm) authForm.style.display = "flex";
+                    if (oauthContainer) oauthContainer.style.display = "none";
+                }
                 modals.openAuthModal();
             } else {
                 modals.closeAuthModal();

@@ -13,3 +13,5 @@ class AuthSessionData(BaseModel):
 class AuthStatusResponse(BaseModel):
     authenticated: bool
     username: str = ""
+    oauth_configured: bool = False
+    provider_name: str = ""

@@ -105,12 +105,21 @@
         <div class="modal-content">
             <h2><i class="ph-bold ph-lock-key"></i> Login</h2>
             <p>Bitte melde dich an, um mit dem Chat zu starten.</p>
+
+            <div id="auth-error-banner" class="auth-error-banner" style="display: none;"></div>
             
             <form id="auth-form" class="auth-form" style="margin-top: 1rem; display: flex; flex-direction: column; gap: 1rem;">
                 <input type="text" id="login-username" placeholder="Benutzername" required autocomplete="username" style="padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 8px;">
                 <input type="password" id="login-password" placeholder="Passwort" required autocomplete="current-password" style="padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 8px;">
                 <button type="submit" class="primary-btn" id="verify-btn">Anmelden</button>
             </form>
+
+            <div id="oauth-login-container" style="display: none; margin-top: 1rem; width: 100%;">
+                <a id="oauth-login-btn" href="/api/auth/oauth/login" class="primary-btn oauth-btn" style="display: flex; align-items: center; justify-content: center; gap: 0.5rem; text-decoration: none;">
+                    <i class="ph-bold ph-sign-in"></i>
+                    <span id="oauth-login-label">Mit SSO anmelden</span>
+                </a>
+            </div>
         </div>
     </div>
 

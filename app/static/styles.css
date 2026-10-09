@@ -654,6 +654,28 @@ body {
     cursor: not-allowed;
 }
 
+.oauth-btn {
+    background: #0082c9;
+    color: #ffffff;
+    text-decoration: none;
+}
+
+.oauth-btn:hover {
+    background: #006aa3;
+    text-decoration: none;
+}
+
+.auth-error-banner {
+    background-color: rgba(239, 68, 68, 0.15);
+    border: 1px solid var(--danger-color);
+    color: #fca5a5;
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    font-size: 0.9rem;
+    margin-bottom: 1rem;
+    text-align: left;
+}
+
 .secondary-btn {
     background: transparent;
     color: var(--text-muted);

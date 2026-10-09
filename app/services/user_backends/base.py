@@ -7,6 +7,9 @@ class BaseUserBackend(ABC):
     Decouples credentials verification from session lifecycle and rate limiting.
     """
 
+    is_oauth: bool = False
+    is_password_supported: bool = True
+
     @property
     @abstractmethod
     def backend_name(self) -> str:

@@ -3,12 +3,16 @@ from typing import Optional, Type
 from app.core.config import USER_BACKEND
 from .base import BaseUserBackend
 from .json_backend import JsonUserBackend
+from .oauth_backend import OAuthUserBackend
 
 logger = logging.getLogger(__name__)
 
 USER_BACKEND_REGISTRY: dict[str, Type[BaseUserBackend]] = {
     "json": JsonUserBackend,
     "file": JsonUserBackend,
+    "oauth": OAuthUserBackend,
+    "oidc": OAuthUserBackend,
+    "nextcloud": OAuthUserBackend,
 }
 
 def validate_user_backend(backend_name: Optional[str] = None) -> str:

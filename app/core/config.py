@@ -81,6 +81,19 @@ DATA_DIR = get_env_str(
 USER_BACKEND = get_env_str("USER_BACKEND", "json").lower()
 USERS_FILE_PATH = os.getenv("USERS_FILE_PATH", "").strip() or None
 
+# --- OAuth 2.0 & OpenID Connect (OIDC) Settings ---
+OAUTH_CLIENT_ID = get_env_str("OAUTH_CLIENT_ID", "")
+OAUTH_CLIENT_SECRET = get_env_str("OAUTH_CLIENT_SECRET", "")
+OAUTH_ISSUER_URL = get_env_str("OAUTH_ISSUER_URL", "")
+OAUTH_DISCOVERY_URL = get_env_str("OAUTH_DISCOVERY_URL", "")
+OAUTH_REDIRECT_URI = get_env_str("OAUTH_REDIRECT_URI", "")
+OAUTH_AUTHORIZE_URL = get_env_str("OAUTH_AUTHORIZE_URL", "")
+OAUTH_TOKEN_URL = get_env_str("OAUTH_TOKEN_URL", "")
+OAUTH_USERINFO_URL = get_env_str("OAUTH_USERINFO_URL", "")
+OAUTH_SCOPE = get_env_str("OAUTH_SCOPE", "openid profile email")
+OAUTH_USERNAME_CLAIM = get_env_str("OAUTH_USERNAME_CLAIM", "preferred_username")
+OAUTH_PROVIDER_NAME = get_env_str("OAUTH_PROVIDER_NAME", "SSO")
+
 # --- Logging Settings ---
 LOG_LEVEL = get_env_str("LOG_LEVEL", "INFO").upper()
 LOG_FORMAT = get_env_str("LOG_FORMAT", "text").lower()
