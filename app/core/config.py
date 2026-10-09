@@ -1,37 +1,126 @@
 import os
 import re
+import logging
 
-# Base persistence directory
-DATA_DIR = os.getenv("DATA_DIR", os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data"))
+logger = logging.getLogger(__name__)
 
-# Logging settings
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-LOG_FORMAT = os.getenv("LOG_FORMAT", "text").lower()
+# --- Typed Environment Helpers ---
 
-# Security & Cookie settings
-COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() in ("true", "1")
-SESSION_COOKIE_NAME = "session_token"
-SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60  # 30 days
+def get_env_str(key: str, default: str) -> str:
+    """Reads a string environment variable, returning default if unset or empty."""
+    val = os.getenv(key)
+    if val is None:
+        return default
+    cleaned = val.strip()
+    return cleaned if cleaned else default
 
-# Rate limiting limits
-MAX_LOGIN_ATTEMPTS = 5
-LOGIN_RATE_WINDOW_SECONDS = 60
 
-# Upload limits
-MAX_UPLOADS_PER_MESSAGE = 10
+def get_env_int(key: str, default: int) -> int:
+    """Reads an integer environment variable, logging a warning and returning default on failure."""
+    val = os.getenv(key)
+    if val is None or not val.strip():
+        return default
+    try:
+        return int(val.strip())
+    except ValueError:
+        logger.warning(
+            f"Ungültiger Integer-Wert für Umgebungsvariable '{key}': '{val}'. "
+            f"Verwende Standardwert {default}."
+        )
+        return default
+
+
+def get_env_float(key: str, default: float) -> float:
+    """Reads a float environment variable, logging a warning and returning default on failure."""
+    val = os.getenv(key)
+    if val is None or not val.strip():
+        return default
+    try:
+        return float(val.strip())
+    except ValueError:
+        logger.warning(
+            f"Ungültiger Float-Wert für Umgebungsvariable '{key}': '{val}'. "
+            f"Verwende Standardwert {default}."
+        )
+        return default
+
+
+def get_env_bool(key: str, default: bool) -> bool:
+    """Reads a boolean environment variable, logging a warning and returning default on failure."""
+    val = os.getenv(key)
+    if val is None:
+        return default
+    normalized = val.strip().lower()
+    if normalized in ("true", "1", "yes", "on"):
+        return True
+    if normalized in ("false", "0", "no", "off"):
+        return False
+    logger.warning(
+        f"Ungültiger Boolean-Wert für Umgebungsvariable '{key}': '{val}'. "
+        f"Verwende Standardwert {default}."
+    )
+    return default
+
+
+def get_env_list(key: str, default: list[str], sep: str = ",") -> list[str]:
+    """Reads a delimited list of strings from an environment variable."""
+    val = os.getenv(key)
+    if val is None or not val.strip():
+        return default
+    items = [item.strip() for item in val.split(sep) if item.strip()]
+    return items if items else default
+
+
+# --- Base Persistence & Storage Settings ---
+DATA_DIR = get_env_str(
+    "DATA_DIR",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
+)
+
+# --- User Backend & Authentication Configuration ---
+USER_BACKEND = get_env_str("USER_BACKEND", "json").lower()
+USERS_FILE_PATH = os.getenv("USERS_FILE_PATH", "").strip() or None
+
+# --- Logging Settings ---
+LOG_LEVEL = get_env_str("LOG_LEVEL", "INFO").upper()
+LOG_FORMAT = get_env_str("LOG_FORMAT", "text").lower()
+
+# --- Security & Cookie Settings ---
+COOKIE_SECURE = get_env_bool("COOKIE_SECURE", False)
+SESSION_COOKIE_NAME = get_env_str("SESSION_COOKIE_NAME", "session_token")
+SESSION_MAX_AGE_SECONDS = get_env_int("SESSION_MAX_AGE_SECONDS", 30 * 24 * 60 * 60)  # 30 days
+
+# --- Rate Limiting Limits ---
+MAX_LOGIN_ATTEMPTS = get_env_int("MAX_LOGIN_ATTEMPTS", 5)
+LOGIN_RATE_WINDOW_SECONDS = get_env_int("LOGIN_RATE_WINDOW_SECONDS", 60)
+
+# --- Upload Limits ---
+MAX_UPLOADS_PER_MESSAGE = get_env_int("MAX_UPLOADS_PER_MESSAGE", 10)
 MAX_UPLOAD_FILES_PER_REQUEST = MAX_UPLOADS_PER_MESSAGE
-MAX_UPLOAD_FILE_SIZE = 25 * 1024 * 1024  # 25 MB
+MAX_UPLOAD_FILE_SIZE = get_env_int("MAX_UPLOAD_FILE_SIZE", 25 * 1024 * 1024)  # 25 MB
 MAX_SINGLE_FILE_SIZE = MAX_UPLOAD_FILE_SIZE
-MAX_ZIP_UPLOAD_SIZE = 500 * 1024 * 1024  # 500 MB
-MAX_ZIP_FILES_COUNT = 1000
-MAX_ZIP_UNCOMPRESSED_BYTES = 1000 * 1024 * 1024  # 1000 MB
+MAX_ZIP_UPLOAD_SIZE = get_env_int("MAX_ZIP_UPLOAD_SIZE", 500 * 1024 * 1024)  # 500 MB
+MAX_ZIP_FILES_COUNT = get_env_int("MAX_ZIP_FILES_COUNT", 1000)
+MAX_ZIP_UNCOMPRESSED_BYTES = get_env_int("MAX_ZIP_UNCOMPRESSED_BYTES", 1000 * 1024 * 1024)  # 1000 MB
+THUMBNAIL_MAX_DIMENSION = get_env_int("THUMBNAIL_MAX_DIMENSION", 400)
 
-# AI & Generation timeouts
-ICON_GENERATION_TIMEOUT_SECONDS = float(os.getenv("ICON_GENERATION_TIMEOUT_SECONDS", "180.0"))
+# --- AI & Generation Timeouts ---
+ICON_GENERATION_TIMEOUT_SECONDS = get_env_float("ICON_GENERATION_TIMEOUT_SECONDS", 180.0)
 
-# AI Models & Thinking Effort configuration
-AGY_DEFAULT_MODEL = os.getenv("AGY_DEFAULT_MODEL", "gemini-3.8-flash").strip() or "gemini-3.8-flash"
-AGY_DEFAULT_THINKING_EFFORT = os.getenv("AGY_DEFAULT_THINKING_EFFORT", "medium").strip().lower() or "medium"
+# --- AI Models, Thinking Effort & CLI Paths ---
+AGY_EXECUTABLE_PATH = get_env_str("AGY_EXECUTABLE_PATH", "agy")
+AGY_CONVERSATIONS_DIR = get_env_str(
+    "AGY_CONVERSATIONS_DIR",
+    os.path.expanduser("~/.gemini/antigravity-cli/conversations")
+)
+AGY_DEFAULT_MODEL = get_env_str("AGY_DEFAULT_MODEL", "gemini-3.8-flash")
+AGY_DEFAULT_THINKING_EFFORT = get_env_str("AGY_DEFAULT_THINKING_EFFORT", "medium").lower()
+
+# --- Network & CORS Settings ---
+CORS_ALLOWED_ORIGINS = get_env_list(
+    "CORS_ALLOWED_ORIGINS",
+    ["http://localhost:8000", "http://127.0.0.1:8000"]
+)
 
 MODEL_CATALOG = {
     "default": {

@@ -294,7 +294,8 @@ async def import_session_endpoint(session_id: str, file: UploadFile = File(...),
             total_read += len(chunk)
             if total_read > MAX_ZIP_UPLOAD_SIZE:
                 logger.warning(f"Rejected import: archive exceeds limit for session {session_id} (user '{username}')")
-                raise HTTPException(status_code=413, detail="ZIP-Archiv ist zu groß (maximal 500 MB erlaubt)")
+                max_zip_mb = MAX_ZIP_UPLOAD_SIZE // (1024 * 1024)
+                raise HTTPException(status_code=413, detail=f"ZIP-Archiv ist zu groß (maximal {max_zip_mb} MB erlaubt)")
             chunks.append(chunk)
 
         zip_bytes = b"".join(chunks)

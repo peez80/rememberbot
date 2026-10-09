@@ -25,7 +25,7 @@ from .logging_config import setup_logging
 setup_logging()
 logger = logging.getLogger(__name__)
 
-from .core.config import AGY_DEFAULT_MODEL, AGY_DEFAULT_THINKING_EFFORT
+from .core.config import AGY_DEFAULT_MODEL, AGY_DEFAULT_THINKING_EFFORT, CORS_ALLOWED_ORIGINS
 from .core.tasks import supervisor, fire_and_forget
 from .core.formatters import format_thought_blocks, format_local_links
 from .agy_client import agy_client
@@ -104,6 +104,14 @@ async def validate_agy_default_configuration():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    try:
+        from .services.user_backends.factory import validate_user_backend
+        backend_name = validate_user_backend()
+        logger.info(f"Benutzerbackend initialisiert: '{backend_name}'")
+    except ValueError as e:
+        logger.error(f"Fehler bei Konfiguration des Benutzerbackends: {e}", exc_info=True)
+        raise
+
     if not os.getenv("PYTEST_CURRENT_TEST") and os.getenv("TESTING") != "1":
         await validate_agy_default_configuration()
     yield
@@ -132,7 +140,7 @@ async def add_security_headers(request: Request, call_next):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
+    allow_origins=CORS_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

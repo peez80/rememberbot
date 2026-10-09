@@ -9,7 +9,7 @@ from collections import defaultdict
 from typing import Dict, Any, Optional
 from PIL import Image, ImageOps
 
-from app.core.config import DATA_DIR
+from app.core.config import DATA_DIR, THUMBNAIL_MAX_DIMENSION
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +106,7 @@ class StorageService:
             logger.error(f"Failed atomic write to {filepath}: {e}", exc_info=True)
             raise
 
-    def generate_thumbnail(self, source_path: str, target_path: str, max_dimension: int = 400) -> bool:
+    def generate_thumbnail(self, source_path: str, target_path: str, max_dimension: int = THUMBNAIL_MAX_DIMENSION) -> bool:
         """
         Generate an optimized thumbnail from source_path and save to target_path.
         Handles EXIF orientation and RGBA transparency.

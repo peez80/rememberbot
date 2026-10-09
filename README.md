@@ -58,7 +58,10 @@ The application is fully containerized and can be started with Docker Compose:
 Data such as logged conversations and parsed information are stored in the local `_rememberbot_data` directory, which is mapped into the container. The data is stored isolated in separate subfolders for each user (e.g., `data/alice/sessions`).
 
 ### User Management
-The application supports multi-user authentication without self-registration. Valid users and their passwords must be configured manually in the `users.json` file located in the persistent data volume, specifically under `data/config/users.json` (or `_rememberbot_data/config/users.json` if running via docker compose).
+The application supports multi-user authentication without self-registration through modular user backends.
+- By default, the `json` backend reads users and passwords from `users.json` located under `data/config/users.json` (or `_rememberbot_data/config/users.json` when running via Docker Compose).
+- The active backend is selectable via the `USER_BACKEND` environment variable (`json` or `file`).
+- A custom path to the users file can optionally be specified via `USERS_FILE_PATH`.
 
 Example `users.json`:
 ```json
@@ -68,31 +71,58 @@ Example `users.json`:
 }
 ```
 > [!WARNING]
-> **Security Note:** Passwords are currently stored in plain text. This authentication mechanism is intended for local or personal use only. Do not use this in a public-facing or production environment without adding proper password hashing.
+> **Security Note:** Passwords in `users.json` are currently stored in plain text. This authentication mechanism is intended for local or personal use only. Do not use this in a public-facing or production environment without adding proper password hashing.
 
 ## Architecture
 
 RememberBot follows a clean, modular multi-tier architecture. See [`docs/architecture.md`](docs/architecture.md) for the complete architectural blueprint and diagrams.
 
-- **`app/core/`**: Configuration, task supervision (`BackgroundSupervisor`), and formatting utilities.
+- **`app/core/`**: Centralized configuration (`config.py`), task supervision (`BackgroundSupervisor`), and formatting utilities.
 - **`app/models/`**: Strongly typed Pydantic domain models for auth, sessions, and chat.
 - **`app/services/`**: Decoupled service layer (`auth_service`, `storage_service`, `session_service`, `agy_service`, `chat_service`).
+- **`app/services/user_backends/`**: Modular user backend providers (`BaseUserBackend`, `JsonUserBackend`, factory registry).
 - **`app/routers/`**: Dedicated FastAPI APIRouters (`auth`, `sessions`, `files`, `chat`).
 - **`app/storage.py` & `app/agy_client.py`**: Lean, backward-compatible facades delegating cleanly to the service layer.
 - **`app/main.py`**: Lean application entry point and middleware configuration.
 - **`app/static/js/`**: Modular Vanilla ES6 frontend (`state`, `api`, `components`, `utils`).
 - **`app/logging_config.py`**: Centralized structured logging.
 
-## Configuration & Logging
+## Configuration & Environment Variables
 
-RememberBot supports the following environment variables:
-- `DATA_DIR`: Directory path for persistent data (default: `/app/data`).
-- `LOG_LEVEL`: Log severity level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` - default: `INFO`).
-- `LOG_FORMAT`: Format of log messages:
-  - `text` (default): Human-readable formatted console output (`YYYY-MM-DD HH:MM:SS [LEVEL] logger (file:line) - message`).
-  - `json`: Structured NDJSON format for log aggregators (e.g., Loki, ELK, CloudWatch).
-- `AGY_DEFAULT_MODEL`: Global default model passed to `agy` CLI (default: `gemini-3.8-flash`). Supported options include Gemini models (`gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.1-pro`), Claude (`claude-sonnet-4-6`, `claude-opus-4-6-thinking`), and GPT (`gpt-oss-120b-medium`).
-- `AGY_DEFAULT_THINKING_EFFORT`: Global default reasoning depth for models supporting thinking effort (`low`, `medium`, `high` for Gemini Flash models; `low`, `high` for Gemini 3.1 Pro - default: `medium`). Models without separate effort configuration (Claude, GPT-OSS) automatically omit the effort flag.
+RememberBot is fully configurable via environment variables. To customize settings, copy the provided `.env.example` file to `.env`:
+
+```bash
+cp .env.example .env
+```
+
+Docker Compose automatically loads variables from `.env`.
+
+### Environment Variables Reference
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `USER_BACKEND` | `str` | `json` | Active user backend (`json`, alias: `file`). |
+| `USERS_FILE_PATH` | `str` | *(empty)* | Optional custom path to `users.json` (default: `${DATA_DIR}/config/users.json`). |
+| `DATA_DIR` | `str` | `/app/data` | Directory path for persistent data. |
+| `SESSION_COOKIE_NAME` | `str` | `session_token` | Name of the authentication session cookie. |
+| `SESSION_MAX_AGE_SECONDS` | `int` | `2592000` | Session cookie maximum age in seconds (30 days). |
+| `COOKIE_SECURE` | `bool` | `false` | Enforce `Secure` attribute on cookies (requires HTTPS). |
+| `MAX_LOGIN_ATTEMPTS` | `int` | `5` | Maximum failed logins before temporary rate-limiting lockout. |
+| `LOGIN_RATE_WINDOW_SECONDS` | `int` | `60` | Sliding window in seconds for login rate-limiting. |
+| `MAX_UPLOADS_PER_MESSAGE` | `int` | `10` | Maximum file attachments allowed per chat message. |
+| `MAX_UPLOAD_FILE_SIZE` | `int` | `26214400` | Maximum single file upload size in bytes (25 MB). |
+| `MAX_ZIP_UPLOAD_SIZE` | `int` | `524288000` | Maximum session ZIP archive import size in bytes (500 MB). |
+| `MAX_ZIP_FILES_COUNT` | `int` | `1000` | Maximum file count inside imported archives (Zip-Bomb defense). |
+| `MAX_ZIP_UNCOMPRESSED_BYTES` | `int` | `1048576000` | Maximum uncompressed archive payload in bytes (1000 MB). |
+| `THUMBNAIL_MAX_DIMENSION` | `int` | `400` | Maximum width/height in pixels for cached thumbnails. |
+| `AGY_EXECUTABLE_PATH` | `str` | `agy` | Command or path to the `antigravity-cli` executable. |
+| `AGY_CONVERSATIONS_DIR` | `str` | `~/.gemini/...` | Path to `antigravity-cli` conversations database directory. |
+| `AGY_DEFAULT_MODEL` | `str` | `gemini-3.8-flash` | Global default model passed to `agy` CLI (`gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.1-pro`, `claude-sonnet-4-6`, `claude-opus-4-6-thinking`, `gpt-oss-120b-medium`). |
+| `AGY_DEFAULT_THINKING_EFFORT` | `str` | `medium` | Default reasoning depth for models with thinking support (`low`, `medium`, `high`). |
+| `ICON_GENERATION_TIMEOUT_SECONDS` | `float` | `180.0` | Timeout in seconds for background icon generation. |
+| `LOG_LEVEL` | `str` | `INFO` | Log severity level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). |
+| `LOG_FORMAT` | `str` | `text` | Log format: `text` (human-readable) or `json` (structured NDJSON). |
+| `CORS_ALLOWED_ORIGINS` | `list[str]` | `http://localhost:8000,http://127.0.0.1:8000` | Comma-separated list of allowed CORS origins. |
 
 > [!NOTE]
 > **Per-Session Customization:** In addition to environment defaults, users can configure the model and thinking effort per chat session via the session settings modal (⚙️ icon). The active session's model and effort are shown as a badge in the chat header.

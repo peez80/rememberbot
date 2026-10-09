@@ -53,3 +53,21 @@ def test_auth_service_session_tokens(auth_service):
     
     auth_service.invalidate_session(token)
     assert auth_service.verify_session(token) is None
+
+
+def test_auth_service_backend_injection():
+    class DummyBackend:
+        backend_name = "dummy"
+        def authenticate(self, username, password):
+            return username == "testuser" and password == "testpass"
+        def user_exists(self, username):
+            return username == "testuser"
+        def get_valid_users(self):
+            return {"testuser": "testpass"}
+
+    dummy = DummyBackend()
+    service = AuthService(backend=dummy)
+    assert service.authenticate("testuser", "testpass") is True
+    assert service.authenticate("testuser", "wrong") is False
+    assert service.get_valid_users() == {"testuser": "testpass"}
+

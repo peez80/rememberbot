@@ -37,10 +37,12 @@ graph TD
 
         subgraph Services ["Service Layer (app/services)"]
             S_Auth["auth_service.py"]
+            S_UB["user_backends/ (base, json, factory)"]
             S_Session["session_service.py"]
             S_Chat["chat_service.py"]
             S_AGY["agy_service.py"]
             S_Storage["storage_service.py"]
+            S_Auth --> S_UB
         end
 
         subgraph Core ["Core & Domain (app/core, app/models)"]
@@ -81,7 +83,11 @@ graph TD
 - **[`auth.py`](file:///apps/app/models/auth.py)**: `LoginRequest`, `AuthStatusResponse`.
 
 ### 2.3 Service-Schicht (`app/services/`)
-- **[`auth_service.py`](file:///apps/app/services/auth_service.py)**: Kapselt Benutzer-Authentifizierung, Session-Token-Lebenszyklus, Cookie-Verwaltung und Rate-Limiting gegen Brute-Force-Angriffe.
+- **[`auth_service.py`](file:///apps/app/services/auth_service.py)**: Kapselt Session-Token-Lebenszyklus, Cookie-Verwaltung und Rate-Limiting gegen Brute-Force-Angriffe. Delegiert die Verifikation von Zugangsdaten an die konfigurierte Benutzerbackend-Schicht.
+- **[`user_backends/`](file:///apps/app/services/user_backends/)**: Modulare Authentifizierungs- und Benutzerquellen:
+  - `base.py`: Abstrakter Vertrag `BaseUserBackend(ABC)`.
+  - `json_backend.py`: Dateibasiertes Backend für `users.json` mit `secrets.compare_digest`.
+  - `factory.py`: Zentrale Registry (`USER_BACKEND_REGISTRY`) und Fabrikfunktion `get_user_backend()` (gesteuert durch `USER_BACKEND`, Optionen: `json`, `file`).
 - **[`storage_service.py`](file:///apps/app/services/storage_service.py)**: Verantwortlich für atomare JSON-Schreibzugriffe (mit Temp-Files und `os.replace`), Dateisystem-Locks, On-Demand-Thumbnail-Erstellung und temporäre Bereinigungen.
 - **[`session_service.py`](file:///apps/app/services/session_service.py)**: Verwaltet Session-Lebenszyklen (CRUD), Einstellungs- und Titel-Updates, Historienverwaltung, Upload-Persistierung mit PIL-Dimensionsextraktion (`save_user_attachments`) und ZipSlip-geschützte ZIP-Exporte/Importe mit automatischer URL- und Pfad-Remappung.
 - **[`agy_service.py`](file:///apps/app/services/agy_service.py)**: Kapselt die `agy`-CLI-Subprozess-Ausführung mit nativer Session-Fortführung (`--conversation <id>`), One-Time-History-Seeding bei bestehenden/importierten Sessions, DB-Prüfung (`conversation_exists`), dynamischer Parameterübergabe (`--model`, `--effort`), NDJSON-Stream-Parsing und SVG-Avatar-Generierung.

@@ -14,13 +14,15 @@ from app.core.config import (
     AGY_DEFAULT_THINKING_EFFORT,
     MODEL_CATALOG,
     resolve_session_model_and_effort,
+    AGY_EXECUTABLE_PATH,
+    AGY_CONVERSATIONS_DIR,
 )
 from app.core.formatters import format_thought_blocks, sanitize_svg
 
 logger = logging.getLogger(__name__)
 
 class AGYService:
-    def __init__(self, executable_path: str = "agy"):
+    def __init__(self, executable_path: str = AGY_EXECUTABLE_PATH):
         self.executable_path = executable_path
 
     def conversation_exists(self, conv_id: Optional[str]) -> bool:
@@ -28,8 +30,7 @@ class AGYService:
             return False
         if not re.match(r'^[a-zA-Z0-9_-]{1,64}$', conv_id):
             return False
-        conversations_dir = os.path.expanduser("~/.gemini/antigravity-cli/conversations")
-        path = os.path.join(conversations_dir, f"{conv_id}.db")
+        path = os.path.join(AGY_CONVERSATIONS_DIR, f"{conv_id}.db")
         return os.path.isfile(path)
 
     def _build_prompt_and_history(

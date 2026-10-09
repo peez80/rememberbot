@@ -631,7 +631,8 @@ class SessionService:
             contents = await upload_file.read()
             file_size = len(contents)
             if file_size > MAX_UPLOAD_FILE_SIZE:
-                raise ValueError(f"Datei '{orig_filename}' ist zu groß (maximal 25 MB erlaubt)")
+                max_mb = MAX_UPLOAD_FILE_SIZE // (1024 * 1024)
+                raise ValueError(f"Datei '{orig_filename}' ist zu groß (maximal {max_mb} MB erlaubt)")
 
             ext = os.path.splitext(orig_filename)[1].lower()
             is_image = False
