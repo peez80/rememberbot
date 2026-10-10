@@ -145,12 +145,40 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    const updateAuthModalView = (authConfig) => {
+        const authForm = document.getElementById("auth-form");
+        const oauthContainer = document.getElementById("oauth-login-container");
+        const oauthLabel = document.getElementById("oauth-login-label");
+        if (authConfig && authConfig.oauth_configured) {
+            if (authForm) authForm.style.display = "none";
+            if (oauthContainer) {
+                oauthContainer.style.display = "block";
+                if (oauthLabel && authConfig.provider_name) {
+                    oauthLabel.textContent = `Mit ${authConfig.provider_name} anmelden`;
+                }
+            }
+        } else {
+            if (authForm) authForm.style.display = "flex";
+            if (oauthContainer) oauthContainer.style.display = "none";
+        }
+    };
+
     // 401 Handler
-    const handleAuthError = () => {
+    const handleAuthError = async () => {
         setCurrentSessionId(null);
         if (chatContainer) chatContainer.innerHTML = '';
         const sessionList = document.getElementById("session-list");
         if (sessionList) sessionList.innerHTML = '';
+
+        if (state.authConfig) {
+            updateAuthModalView(state.authConfig);
+        } else {
+            try {
+                const data = await api.checkAuthStatus();
+                state.authConfig = data;
+                updateAuthModalView(data);
+            } catch (_) {}
+        }
         modals.openAuthModal();
     };
     api.setAuthErrorHandler(handleAuthError);
@@ -823,23 +851,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
         try {
             const data = await api.checkAuthStatus();
-            const authForm = document.getElementById("auth-form");
-            const oauthContainer = document.getElementById("oauth-login-container");
-            const oauthLabel = document.getElementById("oauth-login-label");
+            state.authConfig = data;
+            updateAuthModalView(data);
 
             if (!data.authenticated) {
-                if (data.oauth_configured) {
-                    if (authForm) authForm.style.display = "none";
-                    if (oauthContainer) {
-                        oauthContainer.style.display = "block";
-                        if (oauthLabel && data.provider_name) {
-                            oauthLabel.textContent = `Mit ${data.provider_name} anmelden`;
-                        }
-                    }
-                } else {
-                    if (authForm) authForm.style.display = "flex";
-                    if (oauthContainer) oauthContainer.style.display = "none";
-                }
                 modals.openAuthModal();
             } else {
                 modals.closeAuthModal();

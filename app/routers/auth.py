@@ -170,12 +170,17 @@ async def logout(request: Request, response: Response):
 async def auth_status(request: Request):
     session_token = request.cookies.get(SESSION_COOKIE_NAME)
     username = auth_service.verify_session(session_token)
-    if username:
-        return {"authenticated": True, "username": username}
-
     is_oauth = getattr(auth_service.backend, "is_oauth", False)
+    provider_name = getattr(auth_service.backend, "provider_name", "SSO") if is_oauth else None
+
+    if username:
+        resp = {"authenticated": True, "username": username}
+        if is_oauth:
+            resp["oauth_configured"] = True
+            resp["provider_name"] = provider_name
+        return resp
+
     if is_oauth:
-        provider_name = getattr(auth_service.backend, "provider_name", "SSO")
         return {
             "authenticated": False,
             "oauth_configured": True,

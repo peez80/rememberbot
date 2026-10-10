@@ -52,6 +52,23 @@ def test_auth_status_reports_oauth_configured(setup_oauth_backend):
     assert data["provider_name"] == "Nextcloud"
 
 
+def test_auth_status_reports_oauth_configured_when_authenticated(setup_oauth_backend):
+    backend, transport, _ = setup_oauth_backend
+    session_token = auth_service.create_session("bob")
+    client.cookies.set("session_token", session_token)
+    try:
+        res = client.get("/api/auth/status")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["authenticated"] is True
+        assert data["username"] == "bob"
+        assert data["oauth_configured"] is True
+        assert data["provider_name"] == "Nextcloud"
+    finally:
+        client.cookies.clear()
+        auth_service.invalidate_session(session_token)
+
+
 def test_oauth_login_initiates_redirect_and_sets_cookie(setup_oauth_backend):
     backend, transport, _ = setup_oauth_backend
     res = client.get("/api/auth/oauth/login")
@@ -98,7 +115,11 @@ def test_oauth_callback_successful_flow(setup_oauth_backend):
 
     # Verify session is valid and user storage initialized
     status_res = callback_client.get("/api/auth/status")
-    assert status_res.json() == {"authenticated": True, "username": "bob"}
+    data = status_res.json()
+    assert data["authenticated"] is True
+    assert data["username"] == "bob"
+    assert data["oauth_configured"] is True
+    assert data["provider_name"] == "Nextcloud"
 
     import os
     assert os.path.exists(os.path.join(data_dir, "bob"))

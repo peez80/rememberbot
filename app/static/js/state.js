@@ -13,7 +13,8 @@ export const state = {
     selectSessionCounter: 0,
     lastSessions: [],
     activePollTimers: new Map(),
-    MESSAGE_BATCH_SIZE: 20
+    MESSAGE_BATCH_SIZE: 20,
+    authConfig: null
 };
 
 export function setCurrentSessionId(id) {

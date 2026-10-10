@@ -94,3 +94,55 @@ async def test_oauth_error_banner_and_url_cleanup_e2e(mock_oauth_env):
         await expect(page).to_have_url(f"http://127.0.0.1:{SERVER_PORT}/")
 
         await browser.close()
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_oauth_login_modal_display_after_logout_e2e(mock_oauth_env):
+    session_token = auth_service.create_session("alice")
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context()
+            await context.add_cookies([
+                {
+                    "name": "session_token",
+                    "value": session_token,
+                    "domain": "127.0.0.1",
+                    "path": "/"
+                }
+            ])
+            page = await context.new_page()
+
+            # Handle confirm dialog on logout
+            page.on("dialog", lambda dialog: dialog.accept())
+
+            # Navigate to app (user is authenticated)
+            await page.goto(f"http://127.0.0.1:{SERVER_PORT}/")
+
+            # Modal must be hidden initially
+            modal = page.locator("#auth-modal")
+            await expect(modal).to_be_hidden()
+
+            # User clicks logout
+            logout_btn = page.locator("#logout-btn")
+            await expect(logout_btn).to_be_visible()
+            await logout_btn.click()
+
+            # Auth modal must appear
+            await expect(modal).to_be_visible()
+
+            # Form must be hidden and SSO button must be visible immediately (without page reload)
+            form = page.locator("#auth-form")
+            await expect(form).to_be_hidden()
+
+            btn_container = page.locator("#oauth-login-container")
+            await expect(btn_container).to_be_visible()
+
+            btn = page.locator("#oauth-login-btn")
+            await expect(btn).to_be_visible()
+            await expect(btn).to_contain_text("Mit Nextcloud anmelden")
+
+            await browser.close()
+    finally:
+        auth_service.invalidate_session(session_token)

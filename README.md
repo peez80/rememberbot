@@ -23,6 +23,7 @@ I loved the agentic behavior of the `gemini` / `antigravity` CLI, and I wanted t
 - **Automatic Thumbnail Generation & Caching**: Fast image loading with on-demand generated thumbnails (max 400px, EXIF-transposed, transparent-safe JPEG), long-term HTTP caching (`immutable`), and full-resolution viewing in a new tab.
 - **Universal File & Image Support**: Attach arbitrary files (documents, PDFs, spreadsheets, CSVs, code files, archives) and pictures (with or without text captions) for automatic recognition and processing. Supports file attachments via dedicated 3-button bar (📎 Paperclip, 🖼️ Gallery, 📷 Mobile Camera), drag-and-drop, and clipboard paste. The AI agent can inspect and work with uploaded files directly.
 - **Session Export & Import (ZIP Archives)**: Easily back up or migrate complete chat sessions as compact ZIP archives (including messages, settings, custom icons, uploaded attachments, and AI-generated files, while omitting regenerable thumbnails). Import archives into fresh chat sessions with automatic URL and path remapping, ZipSlip protection, and cross-user/cross-instance portability.
+- **Modular Authentication & OpenID Connect SSO**: Support for simple file-based authentication (`users.json`) or enterprise Single Sign-On via standard OpenID Connect / OAuth 2.0 (Nextcloud, Keycloak, Authentik, Zitadel, GitLab, Google) hardened with PKCE (RFC 7636) and CSRF protection.
 - **Hardened Security Architecture**: Defense-in-depth security including strict session ID validation against path traversal, timing-attack-resistant authentication, sandboxed Content Security Policy (CSP) and nosniff headers for user uploads and generated files, streaming Zip-Bomb and DoS defense, and DOMPurify with Subresource Integrity (SRI).
 - **Smart Parsing**: Powered by Google's Gemini models via the `antigravity-cli`, extracting structured data automatically.
 - **Responsive Web App**: Built with vanilla HTML/JS/CSS for a fast, responsive user experience.
@@ -89,6 +90,9 @@ OAUTH_CLIENT_SECRET=your-nextcloud-client-secret
 OAUTH_ISSUER_URL=https://nextcloud.example.com
 OAUTH_REDIRECT_URI=https://rememberbot.example.com/api/auth/oauth/callback
 OAUTH_PROVIDER_NAME=Nextcloud
+OAUTH_SCOPE=openid profile email
+OAUTH_USERNAME_CLAIM=preferred_username
+COOKIE_SECURE=true
 ```
 
 ## Architecture
@@ -98,7 +102,8 @@ RememberBot follows a clean, modular multi-tier architecture. See [`docs/archite
 - **`app/core/`**: Centralized configuration (`config.py`), task supervision (`BackgroundSupervisor`), and formatting utilities.
 - **`app/models/`**: Strongly typed Pydantic domain models for auth, sessions, and chat.
 - **`app/services/`**: Decoupled service layer (`auth_service`, `storage_service`, `session_service`, `agy_service`, `chat_service`).
-- **`app/services/user_backends/`**: Modular user backend providers (`BaseUserBackend`, `JsonUserBackend`, factory registry).
+- **`app/services/oauth/`**: OpenID Connect & OAuth 2.0 client (`OAuthClient`) with automatic discovery, PKCE, and claim sanitization.
+- **`app/services/user_backends/`**: Modular user backend providers (`BaseUserBackend`, `JsonUserBackend`, `OAuthUserBackend`, factory registry).
 - **`app/routers/`**: Dedicated FastAPI APIRouters (`auth`, `sessions`, `files`, `chat`).
 - **`app/storage.py` & `app/agy_client.py`**: Lean, backward-compatible facades delegating cleanly to the service layer.
 - **`app/main.py`**: Lean application entry point and middleware configuration.
@@ -119,8 +124,19 @@ Docker Compose automatically loads variables from `.env`.
 
 | Variable | Type | Default | Description |
 |---|---|---|---|
-| `USER_BACKEND` | `str` | `json` | Active user backend (`json`, alias: `file`). |
+| `USER_BACKEND` | `str` | `json` | Active user backend (`json`, `file`, `oauth`, `oidc`, `nextcloud`). |
 | `USERS_FILE_PATH` | `str` | *(empty)* | Optional custom path to `users.json` (default: `${DATA_DIR}/config/users.json`). |
+| `OAUTH_CLIENT_ID` | `str` | *(empty)* | OAuth 2.0 / OIDC Client Identifier. |
+| `OAUTH_CLIENT_SECRET` | `str` | *(empty)* | OAuth 2.0 / OIDC Client Secret (confidential clients). |
+| `OAUTH_ISSUER_URL` | `str` | *(empty)* | Base Issuer URL for automatic OIDC discovery (e.g. `https://cloud.example.com`). |
+| `OAUTH_DISCOVERY_URL` | `str` | *(empty)* | Optional explicit URL to `openid-configuration` (bypasses discovery resolution). |
+| `OAUTH_REDIRECT_URI` | `str` | *(empty)* | Explicit external redirect callback URI (recommended behind reverse proxies). |
+| `OAUTH_AUTHORIZE_URL` | `str` | *(empty)* | Optional explicit authorization endpoint override. |
+| `OAUTH_TOKEN_URL` | `str` | *(empty)* | Optional explicit token endpoint override. |
+| `OAUTH_USERINFO_URL` | `str` | *(empty)* | Optional explicit userinfo endpoint override. |
+| `OAUTH_SCOPE` | `str` | `openid profile email` | Requested OAuth scopes (space-delimited). |
+| `OAUTH_USERNAME_CLAIM` | `str` | `preferred_username` | Primary ID token/userinfo claim for username (fallbacks: `sub`, `email`). |
+| `OAUTH_PROVIDER_NAME` | `str` | `SSO` | Display name of the identity provider on the UI button (e.g. `Nextcloud`). |
 | `DATA_DIR` | `str` | `/app/data` | Directory path for persistent data. |
 | `SESSION_COOKIE_NAME` | `str` | `session_token` | Name of the authentication session cookie. |
 | `SESSION_MAX_AGE_SECONDS` | `int` | `2592000` | Session cookie maximum age in seconds (30 days). |
