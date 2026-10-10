@@ -145,9 +145,9 @@ Docker Compose automatically loads variables from `.env`.
 | `LOGIN_RATE_WINDOW_SECONDS` | `int` | `60` | Sliding window in seconds for login rate-limiting. |
 | `MAX_UPLOADS_PER_MESSAGE` | `int` | `10` | Maximum file attachments allowed per chat message. |
 | `MAX_UPLOAD_FILE_SIZE` | `int` | `26214400` | Maximum single file upload size in bytes (25 MB). |
-| `MAX_ZIP_UPLOAD_SIZE` | `int` | `524288000` | Maximum session ZIP archive import size in bytes (500 MB). |
-| `MAX_ZIP_FILES_COUNT` | `int` | `1000` | Maximum file count inside imported archives (Zip-Bomb defense). |
-| `MAX_ZIP_UNCOMPRESSED_BYTES` | `int` | `1048576000` | Maximum uncompressed archive payload in bytes (1000 MB). |
+| `MAX_ZIP_UPLOAD_SIZE` | `int` | `2097152000` | Maximum session ZIP archive import size in bytes (2000 MB). |
+| `MAX_ZIP_FILES_COUNT` | `int` | `10000` | Maximum file count inside imported archives (Zip-Bomb defense). |
+| `MAX_ZIP_UNCOMPRESSED_BYTES` | `int` | `10485760000` | Maximum uncompressed archive payload in bytes (10000 MB). |
 | `THUMBNAIL_MAX_DIMENSION` | `int` | `400` | Maximum width/height in pixels for cached thumbnails. |
 | `AGY_EXECUTABLE_PATH` | `str` | `agy` | Command or path to the `antigravity-cli` executable. |
 | `AGY_CONVERSATIONS_DIR` | `str` | `~/.gemini/...` | Path to `antigravity-cli` conversations database directory. |

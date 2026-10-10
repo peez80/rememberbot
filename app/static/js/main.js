@@ -47,10 +47,14 @@ document.addEventListener("DOMContentLoaded", () => {
     const closePromptBtn = document.getElementById("close-prompt-btn");
     const savePromptBtn = document.getElementById("save-prompt-btn");
     const exportSessionBtn = document.getElementById("export-session-btn");
+    const exportCancelBtn = document.getElementById("export-cancel-btn");
     const importSessionBtn = document.getElementById("import-session-btn");
+    const importCancelBtn = document.getElementById("import-cancel-btn");
     const importSessionInput = document.getElementById("import-session-input");
     const importStatusText = document.getElementById("import-status-text");
 
+    let activeExportAbortController = null;
+    let activeImportAbortController = null;
     let modelCatalog = null;
 
     const ensureModelCatalogLoaded = async () => {
@@ -627,16 +631,76 @@ document.addEventListener("DOMContentLoaded", () => {
     if (systemPromptBtn) systemPromptBtn.addEventListener("click", modals.openSystemPromptModal);
     if (closePromptBtn) closePromptBtn.addEventListener("click", modals.closeSystemPromptModal);
 
+    if (exportCancelBtn) {
+        exportCancelBtn.addEventListener("click", () => {
+            if (activeExportAbortController) {
+                activeExportAbortController.abort();
+                activeExportAbortController = null;
+            }
+            modals.closeExportModal();
+            if (exportSessionBtn) exportSessionBtn.disabled = false;
+        });
+    }
+
     if (exportSessionBtn) {
-        exportSessionBtn.addEventListener("click", () => {
-            if (!state.currentSessionId) return;
-            const downloadUrl = `/api/sessions/${state.currentSessionId}/export`;
-            const link = document.createElement("a");
-            link.href = downloadUrl;
-            link.setAttribute("download", "");
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+        exportSessionBtn.addEventListener("click", async () => {
+            if (!state.currentSessionId || exportSessionBtn.disabled) return;
+            exportSessionBtn.disabled = true;
+            activeExportAbortController = new AbortController();
+            modals.openExportModal();
+
+            try {
+                const { blob, filename } = await api.exportSessionArchive(state.currentSessionId, activeExportAbortController.signal);
+
+                modals.updateExportModalStatus({
+                    title: '<i class="ph-bold ph-check-circle" style="color: #10b981;"></i> Download gestartet',
+                    message: 'Der Download beginnt jetzt...',
+                    detail: '',
+                    isError: false,
+                    showSpinner: false
+                });
+
+                const blobUrl = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = blobUrl;
+                link.download = filename;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+
+                setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+                setTimeout(() => {
+                    modals.closeExportModal();
+                    if (exportSessionBtn) exportSessionBtn.disabled = false;
+                }, 500);
+            } catch (err) {
+                if (err.name === "AbortError") {
+                    return;
+                }
+                console.error("Session export error:", err);
+                modals.updateExportModalStatus({
+                    title: '<i class="ph-bold ph-warning-circle" style="color: #ef4444;"></i> Export fehlgeschlagen',
+                    message: err.message || "Fehler beim Vorbereiten des Archivs",
+                    detail: "Bitte versuche es erneut.",
+                    isError: true,
+                    showSpinner: false,
+                    buttonText: "Schließen"
+                });
+                if (exportSessionBtn) exportSessionBtn.disabled = false;
+            } finally {
+                activeExportAbortController = null;
+            }
+        });
+    }
+
+    if (importCancelBtn) {
+        importCancelBtn.addEventListener("click", () => {
+            if (activeImportAbortController) {
+                activeImportAbortController.abort();
+                activeImportAbortController = null;
+            }
+            modals.closeImportModal();
+            if (importSessionBtn) importSessionBtn.disabled = false;
         });
     }
 
@@ -650,43 +714,70 @@ document.addEventListener("DOMContentLoaded", () => {
             const file = e.target.files && e.target.files[0];
             if (!file || !state.currentSessionId) return;
 
-            importSessionBtn.disabled = true;
-            if (importStatusText) {
-                importStatusText.style.display = "block";
-                importStatusText.style.color = "var(--text-muted)";
-                importStatusText.textContent = "Importiere Chat-Archiv...";
+            // Check size limit: 2000MB (matching backend MAX_ZIP_UPLOAD_SIZE = 2000 * 1024 * 1024)
+            if (file.size > 2000 * 1024 * 1024) {
+                modals.openImportModal(file.name, file.size);
+                modals.setImportStepStatus("upload", "error", "Datei zu groß (max. 2000 MB)");
+                modals.setImportModalError("Das ausgewählte ZIP-Archiv überschreitet die Maximalgröße von 2000 MB.");
+                importSessionInput.value = "";
+                return;
             }
 
-            try {
-                const response = await api.importSessionArchive(state.currentSessionId, file);
+            importSessionBtn.disabled = true;
+            activeImportAbortController = new AbortController();
+            modals.openImportModal(file.name, file.size);
 
-                if (response.ok) {
-                    modals.closeSystemPromptModal();
-                    await loadSessions();
-                    await selectSession(state.currentSessionId, true);
-                } else {
-                    let errMsg = "Fehler beim Importieren des Chats.";
-                    try {
-                        const errData = await response.json();
-                        if (errData.detail || errData.error) {
-                            errMsg = errData.detail || errData.error;
+            modals.setImportStepStatus("upload", "active", "Wird hochgeladen (0%)...");
+
+            try {
+                await api.importSessionArchive(state.currentSessionId, file, {
+                    signal: activeImportAbortController.signal,
+                    onUploadProgress: (pct) => {
+                        if (pct < 100) {
+                            modals.setImportStepStatus("upload", "active", `Wird hochgeladen (${pct}%)...`);
+                        } else {
+                            modals.setImportStepStatus("upload", "done", "Archiv übertragen (100%)");
+                            modals.setImportStepStatus("verify", "active", "Integrität & Sicherheit prüfen...");
                         }
-                    } catch (_) {}
-                    if (importStatusText) {
-                        importStatusText.textContent = errMsg;
-                        importStatusText.style.color = "var(--danger-color, #ef4444)";
                     }
-                    alert(errMsg);
+                });
+
+                modals.setImportStepStatus("upload", "done", "Archiv übertragen");
+                modals.setImportStepStatus("verify", "done", "Archiv geprüft & entpackt");
+                modals.setImportStepStatus("restore", "done", "Historie & Medien wiederhergestellt");
+
+                modals.setImportStepStatus("finalize", "active", "Chat wird geladen...");
+
+                await loadSessions();
+                await selectSession(state.currentSessionId, true);
+
+                modals.setImportStepStatus("finalize", "done", "Chat bereit");
+
+                const titleEl = modals.getImportModalTitle();
+                if (titleEl) {
+                    titleEl.innerHTML = '<i class="ph-bold ph-check-circle" style="color: #10b981;"></i> Import erfolgreich!';
                 }
+
+                setTimeout(() => {
+                    modals.closeImportModal();
+                    modals.closeSystemPromptModal();
+                    if (importSessionBtn) importSessionBtn.disabled = false;
+                }, 600);
             } catch (err) {
-                console.error("Error importing session", err);
-                if (importStatusText) {
-                    importStatusText.textContent = "Verbindungsfehler beim Importieren.";
-                    importStatusText.style.color = "var(--danger-color, #ef4444)";
+                if (err.name === "AbortError") {
+                    return;
                 }
-                alert("Verbindungsfehler beim Importieren.");
+                console.error("Error importing session:", err);
+                const uploadStep = document.getElementById("import-step-upload");
+                if (uploadStep && uploadStep.classList.contains("active")) {
+                    modals.setImportStepStatus("upload", "error", "Upload fehlgeschlagen");
+                } else {
+                    modals.setImportStepStatus("verify", "error", "Prüfung fehlgeschlagen");
+                }
+                modals.setImportModalError(err.message || "Fehler beim Importieren des Chats.");
+                if (importSessionBtn) importSessionBtn.disabled = false;
             } finally {
-                importSessionBtn.disabled = false;
+                activeImportAbortController = null;
                 importSessionInput.value = "";
             }
         });

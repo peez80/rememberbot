@@ -259,6 +259,7 @@ async def export_session_endpoint(session_id: str, username: str = Depends(get_c
             media_type="application/zip",
             headers={
                 "Content-Disposition": f'attachment; filename="{filename}"',
+                "Access-Control-Expose-Headers": "Content-Disposition",
                 "Cache-Control": "no-cache"
             }
         )

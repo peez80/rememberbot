@@ -214,15 +214,16 @@ def test_sec08_upload_size_limits_and_zip_bomb(tmp_path, monkeypatch):
         assert res.status_code in (400, 413)
         assert "groß" in res.text.lower() or "large" in res.text.lower() or "limit" in res.text.lower()
         
-    # 2. ZIP import limit test: 501 MB rejected with 413
-    over_500mb = b"PK\x05\x06" + b"\x00" * 18 + b"0" * (501 * 1024 * 1024) # 501MB
+    # 2. ZIP import limit test: rejected with 413 when exceeding MAX_ZIP_UPLOAD_SIZE
+    monkeypatch.setattr("app.routers.sessions.MAX_ZIP_UPLOAD_SIZE", 10 * 1024 * 1024)
+    over_limit = b"PK\x05\x06" + b"\x00" * 18 + b"0" * (11 * 1024 * 1024)  # 11MB
     with patch("app.main.check_session_exists", return_value=True):
         res_zip = client.post(
             "/api/sessions/sess_upload_limit/import",
-            files={"file": ("large_session.zip", over_500mb, "application/zip")}
+            files={"file": ("large_session.zip", over_limit, "application/zip")}
         )
         assert res_zip.status_code == 413
-        assert "500 MB" in res_zip.text
+        assert "10 MB" in res_zip.text
 
 
 

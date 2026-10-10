@@ -1096,4 +1096,63 @@ body {
     margin-top: 0.25rem;
 }
 
+/* Export Progress Modal Spinner & Animations */
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.ph-spin {
+    animation: spin 1s linear infinite;
+    display: inline-block;
+}
+
+.export-status-error {
+    color: #ef4444 !important;
+}
+
+/* Import Progress Modal Styles */
+.import-step-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    background-color: var(--bg-color);
+    border: 1px solid var(--border-color);
+    transition: all 0.2s ease;
+}
+
+.import-step-item.active {
+    border-color: var(--primary-color);
+    background-color: rgba(99, 102, 241, 0.05);
+}
+
+.import-step-item.error {
+    border-color: #ef4444;
+    background-color: rgba(239, 68, 68, 0.05);
+}
+
+.import-step-item.done {
+    border-color: rgba(16, 185, 129, 0.3);
+}
+
+.import-step-icon {
+    font-size: 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    flex-shrink: 0;
+}
+
+.import-step-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    flex: 1;
+}
+
+
+
 

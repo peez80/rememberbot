@@ -179,6 +179,80 @@
         </div>
     </div>
 
+    <!-- Export Progress Modal -->
+    <div id="export-modal" class="modal-overlay" style="display: none; z-index: 1100;">
+        <div class="modal-content" style="max-width: 420px;">
+            <h2 id="export-modal-title"><i class="ph-bold ph-download-simple"></i> Chat exportieren</h2>
+            <div id="export-status-spinner" class="export-spinner" style="margin: 1.5rem auto;">
+                <i class="ph-bold ph-spinner ph-spin" style="font-size: 2.5rem; color: var(--primary-color);"></i>
+            </div>
+            <p id="export-status-message" style="margin-bottom: 0.5rem; font-weight: 500;">ZIP-Archiv wird vorbereitet...</p>
+            <p id="export-status-detail" style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.5rem;">
+                Dies kann bei umfangreichen Chats und Bildern einen Moment dauern.
+            </p>
+            <div id="export-modal-actions" style="display: flex; justify-content: center; gap: 0.5rem;">
+                <button type="button" class="secondary-btn" id="export-cancel-btn">Abbrechen</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Import Progress Modal -->
+    <div id="import-modal" class="modal-overlay" style="display: none; z-index: 1100;">
+        <div class="modal-content" style="max-width: 460px; text-align: left;">
+            <h2 id="import-modal-title" style="display: flex; align-items: center; gap: 0.5rem; justify-content: flex-start; color: var(--primary-color); margin-bottom: 0.5rem;">
+                <i class="ph-bold ph-upload-simple"></i> Chat importieren
+            </h2>
+            <p id="import-modal-file-info" style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.25rem;">
+                Wähle eine ZIP-Datei...
+            </p>
+
+            <div class="import-steps-list" style="display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.5rem;">
+                <div class="import-step-item" id="import-step-upload">
+                    <div class="import-step-icon" id="import-step-upload-icon">
+                        <i class="ph-bold ph-circle" style="color: var(--text-muted);"></i>
+                    </div>
+                    <div class="import-step-content">
+                        <span class="import-step-title" style="font-weight: 500; font-size: 0.9rem;">1. Archiv übertragen</span>
+                        <span class="import-step-status" id="import-step-upload-status" style="font-size: 0.8rem; color: var(--text-muted);">Warten...</span>
+                    </div>
+                </div>
+                <div class="import-step-item" id="import-step-verify">
+                    <div class="import-step-icon" id="import-step-verify-icon">
+                        <i class="ph-bold ph-circle" style="color: var(--text-muted);"></i>
+                    </div>
+                    <div class="import-step-content">
+                        <span class="import-step-title" style="font-weight: 500; font-size: 0.9rem;">2. Archiv prüfen & entpacken</span>
+                        <span class="import-step-status" id="import-step-verify-status" style="font-size: 0.8rem; color: var(--text-muted);">Warten...</span>
+                    </div>
+                </div>
+                <div class="import-step-item" id="import-step-restore">
+                    <div class="import-step-icon" id="import-step-restore-icon">
+                        <i class="ph-bold ph-circle" style="color: var(--text-muted);"></i>
+                    </div>
+                    <div class="import-step-content">
+                        <span class="import-step-title" style="font-weight: 500; font-size: 0.9rem;">3. Chat-Historie & Medien wiederherstellen</span>
+                        <span class="import-step-status" id="import-step-restore-status" style="font-size: 0.8rem; color: var(--text-muted);">Warten...</span>
+                    </div>
+                </div>
+                <div class="import-step-item" id="import-step-finalize">
+                    <div class="import-step-icon" id="import-step-finalize-icon">
+                        <i class="ph-bold ph-circle" style="color: var(--text-muted);"></i>
+                    </div>
+                    <div class="import-step-content">
+                        <span class="import-step-title" style="font-weight: 500; font-size: 0.9rem;">4. Chat laden & Ansicht aktualisieren</span>
+                        <span class="import-step-status" id="import-step-finalize-status" style="font-size: 0.8rem; color: var(--text-muted);">Warten...</span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="import-modal-error-banner" style="display: none; padding: 0.75rem; border-radius: 6px; background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #ef4444; font-size: 0.85rem; margin-bottom: 1.25rem;"></div>
+
+            <div id="import-modal-actions" style="display: flex; justify-content: flex-end; gap: 0.5rem;">
+                <button type="button" class="secondary-btn" id="import-cancel-btn">Abbrechen</button>
+            </div>
+        </div>
+    </div>
+
     <script type="module" src="/static/js/main.js"></script>
 </body>
 </html>

@@ -92,13 +92,67 @@ export const updateSessionTitle = async (sessionId, title) => {
     });
 };
 
-export const importSessionArchive = async (sessionId, file) => {
-    const formData = new FormData();
-    formData.append("file", file);
+export const importSessionArchive = async (sessionId, file, { onUploadProgress, signal } = {}) => {
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", `/api/sessions/${sessionId}/import`);
 
-    return apiFetch(`/api/sessions/${sessionId}/import`, {
-        method: "POST",
-        body: formData
+        if (signal) {
+            if (signal.aborted) {
+                const err = new Error("Import abgebrochen");
+                err.name = "AbortError";
+                return reject(err);
+            }
+            signal.addEventListener("abort", () => {
+                xhr.abort();
+                const err = new Error("Import abgebrochen");
+                err.name = "AbortError";
+                reject(err);
+            });
+        }
+
+        if (xhr.upload && onUploadProgress) {
+            xhr.upload.addEventListener("progress", (e) => {
+                if (e.lengthComputable) {
+                    const pct = Math.round((e.loaded / e.total) * 100);
+                    onUploadProgress(pct);
+                }
+            });
+        }
+
+        xhr.onload = () => {
+            if (xhr.status === 401 && onAuthErrorHandler) {
+                onAuthErrorHandler();
+            }
+            if (xhr.status >= 200 && xhr.status < 300) {
+                try {
+                    const data = JSON.parse(xhr.responseText);
+                    resolve(data);
+                } catch (_) {
+                    resolve({ success: true });
+                }
+            } else {
+                let detail = "Fehler beim Importieren des Chats.";
+                try {
+                    const data = JSON.parse(xhr.responseText);
+                    if (data && (data.detail || data.error)) {
+                        detail = data.detail || data.error;
+                    }
+                } catch (_) {}
+                reject(new Error(detail));
+            }
+        };
+
+        xhr.onerror = () => reject(new Error("Verbindungsfehler beim Importieren des Archivs."));
+        xhr.onabort = () => {
+            const err = new Error("Import abgebrochen");
+            err.name = "AbortError";
+            reject(err);
+        };
+
+        const formData = new FormData();
+        formData.append("file", file);
+        xhr.send(formData);
     });
 };
 
@@ -111,3 +165,26 @@ export const sendChatMessage = async (sessionId, formData) => {
         body: formData
     });
 };
+
+export const exportSessionArchive = async (sessionId, signal) => {
+    const res = await apiFetch(`/api/sessions/${sessionId}/export`, { signal });
+    if (!res.ok) {
+        let errorDetail = "Fehler beim Exportieren";
+        try {
+            const data = await res.json();
+            if (data && data.detail) errorDetail = data.detail;
+        } catch (_) {}
+        throw new Error(errorDetail);
+    }
+    let filename = `chat_${sessionId}.zip`;
+    const disposition = res.headers.get("content-disposition");
+    if (disposition) {
+        const match = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";\r\n]+)"?/i);
+        if (match && match[1]) {
+            filename = match[1].replace(/["']/g, "").trim();
+        }
+    }
+    const blob = await res.blob();
+    return { blob, filename };
+};
+

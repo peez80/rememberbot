@@ -81,9 +81,9 @@ def test_default_config_constants():
     assert config.LOGIN_RATE_WINDOW_SECONDS == 60
     assert config.MAX_UPLOADS_PER_MESSAGE == 10
     assert config.MAX_UPLOAD_FILE_SIZE == 25 * 1024 * 1024
-    assert config.MAX_ZIP_UPLOAD_SIZE == 500 * 1024 * 1024
-    assert config.MAX_ZIP_FILES_COUNT == 1000
-    assert config.MAX_ZIP_UNCOMPRESSED_BYTES == 1000 * 1024 * 1024
+    assert config.MAX_ZIP_UPLOAD_SIZE == 2000 * 1024 * 1024
+    assert config.MAX_ZIP_FILES_COUNT == 10000
+    assert config.MAX_ZIP_UNCOMPRESSED_BYTES == 10000 * 1024 * 1024
     assert config.THUMBNAIL_MAX_DIMENSION == 400
     assert config.AGY_EXECUTABLE_PATH == "agy"
     assert "conversations" in config.AGY_CONVERSATIONS_DIR
