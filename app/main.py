@@ -25,7 +25,7 @@ from .logging_config import setup_logging
 setup_logging()
 logger = logging.getLogger(__name__)
 
-from .core.config import AGY_DEFAULT_MODEL, AGY_DEFAULT_THINKING_EFFORT, CORS_ALLOWED_ORIGINS
+from .core.config import AGY_DEFAULT_MODEL, AGY_DEFAULT_THINKING_EFFORT, EFFORT_SUFFIXES, CORS_ALLOWED_ORIGINS
 from .core.tasks import supervisor, fire_and_forget
 from .core.formatters import format_thought_blocks, format_local_links
 from .agy_client import agy_client
@@ -59,7 +59,7 @@ async def validate_agy_default_configuration():
     probe_cmd = ["agy", "--dangerously-skip-permissions"]
     if AGY_DEFAULT_MODEL:
         probe_cmd.extend(["--model", AGY_DEFAULT_MODEL])
-    if AGY_DEFAULT_THINKING_EFFORT:
+    if AGY_DEFAULT_THINKING_EFFORT and not (AGY_DEFAULT_MODEL and AGY_DEFAULT_MODEL.endswith(EFFORT_SUFFIXES)):
         probe_cmd.extend(["--effort", AGY_DEFAULT_THINKING_EFFORT])
     probe_cmd.extend(["--prompt", "ping"])
 

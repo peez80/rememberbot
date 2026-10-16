@@ -40,7 +40,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const systemPromptForm = document.getElementById("system-prompt-form");
     const systemPromptInput = document.getElementById("system-prompt-input");
     const chatModelSelect = document.getElementById("chat-model-select");
-    const chatThinkingEffortSelect = document.getElementById("chat-thinking-effort-select");
     const settingsErrorBanner = document.getElementById("settings-error-banner");
     const sessionModelIndicator = document.getElementById("session-model-indicator");
     const gpsSettingInput = document.getElementById("gps-setting-input");
@@ -81,71 +80,24 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     };
 
-    const updateEffortOptionsForModel = (selectedModel) => {
-        if (!chatThinkingEffortSelect) return;
-        const modelKey = selectedModel || "default";
-        const spec = modelCatalog ? modelCatalog[modelKey] : null;
-        const supportsThinking = spec ? (spec.supports_thinking !== false) : true;
-        const allowed = spec ? (spec.allowed_efforts || []) : ["low", "high"];
-
-        if (!supportsThinking) {
-            chatThinkingEffortSelect.disabled = true;
-            chatThinkingEffortSelect.value = "";
-            Array.from(chatThinkingEffortSelect.options).forEach(opt => {
-                opt.disabled = true;
-            });
-            return;
-        }
-
-        chatThinkingEffortSelect.disabled = false;
-        Array.from(chatThinkingEffortSelect.options).forEach(opt => {
-            const val = opt.value;
-            if (!val) {
-                opt.disabled = false;
-                opt.text = "Standard / Automatisch";
-            } else {
-                const isAllowed = allowed.includes(val);
-                opt.disabled = !isAllowed;
-                if (!isAllowed) {
-                    if (!opt.text.includes("(nicht unterstützt)")) {
-                        opt.text = opt.text.replace(" (nicht verfügbar)", "").replace(" (nicht unterstützt)", "") + " (nicht unterstützt)";
-                    }
-                } else {
-                    opt.text = opt.text.replace(" (nicht verfügbar)", "").replace(" (nicht unterstützt)", "");
-                }
-            }
-        });
-
-        const currentEffort = chatThinkingEffortSelect.value;
-        if (currentEffort && !allowed.includes(currentEffort)) {
-            chatThinkingEffortSelect.value = "";
-        }
-    };
-
-    const updateHeaderModelIndicator = (model, effort) => {
+    const updateHeaderModelIndicator = (model) => {
         if (!sessionModelIndicator) return;
-        if (!model && !effort) {
+        if (!model) {
             sessionModelIndicator.style.display = "none";
             sessionModelIndicator.textContent = "";
             return;
         }
 
         const modelSpec = modelCatalog && model ? modelCatalog[model] : null;
-        const modelLabel = modelSpec ? modelSpec.label : (model || "Standard");
+        const modelLabel = modelSpec ? modelSpec.label : model;
 
-        let effortLabel = "";
-        if (effort === "low") effortLabel = " · Niedriges Thinking";
-        else if (effort === "medium") effortLabel = " · Mittleres Thinking";
-        else if (effort === "high") effortLabel = " · Hohes Thinking";
-
-        sessionModelIndicator.textContent = `${modelLabel}${effortLabel}`;
+        sessionModelIndicator.textContent = modelLabel;
         sessionModelIndicator.style.display = "block";
     };
 
     if (chatModelSelect) {
         chatModelSelect.addEventListener("change", () => {
             if (settingsErrorBanner) settingsErrorBanner.style.display = "none";
-            updateEffortOptionsForModel(chatModelSelect.value);
         });
     }
 
@@ -302,13 +254,13 @@ document.addEventListener("DOMContentLoaded", () => {
                     }
                     await ensureModelCatalogLoaded();
                     if (chatModelSelect) {
-                        chatModelSelect.value = promptData.model || "";
+                        const desiredModel = promptData.model || "";
+                        chatModelSelect.value = desiredModel;
+                        if (chatModelSelect.value !== desiredModel) {
+                            chatModelSelect.value = "";
+                        }
                     }
-                    if (chatThinkingEffortSelect) {
-                        chatThinkingEffortSelect.value = promptData.thinking_effort || "";
-                    }
-                    updateEffortOptionsForModel(promptData.model);
-                    updateHeaderModelIndicator(promptData.model, promptData.thinking_effort);
+                    updateHeaderModelIndicator(promptData.model);
                 }
             }
 
@@ -791,7 +743,6 @@ document.addEventListener("DOMContentLoaded", () => {
             const promptText = systemPromptInput ? systemPromptInput.value.trim() : "";
             const includeGps = gpsSettingInput ? gpsSettingInput.checked : false;
             const modelVal = chatModelSelect ? (chatModelSelect.value || null) : null;
-            const effortVal = (chatThinkingEffortSelect && !chatThinkingEffortSelect.disabled) ? (chatThinkingEffortSelect.value || null) : null;
             const titleInput = document.getElementById("chat-title-input");
             const titleText = titleInput ? titleInput.value.trim() : "";
             
@@ -809,7 +760,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     prompt: promptText,
                     include_gps: includeGps,
                     model: modelVal,
-                    thinking_effort: effortVal
+                    thinking_effort: null
                 });
                 const session = state.lastSessions?.find(s => s.id === state.currentSessionId);
                 let titlePromise = null;
@@ -823,7 +774,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 if (allOk) {
                     state.currentSessionGpsEnabled = includeGps;
-                    updateHeaderModelIndicator(modelVal, effortVal);
+                    updateHeaderModelIndicator(modelVal);
                     modals.closeSystemPromptModal();
                     if (titlePromise) {
                         await loadSessions();

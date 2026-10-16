@@ -306,15 +306,16 @@ async def test_system_prompt_settings_modal_flow_e2e():
             body=json.dumps(sessions_state)
         ))
 
-        await page.route("**/api/models", lambda route: route.fulfill(
+        await page.route("**/api/sessions/models/catalog", lambda route: route.fulfill(
             status=200,
             content_type="application/json",
             body=json.dumps({
-                "default_model": "gemini-3.8-flash",
-                "default_thinking_effort": "medium",
+                "default_model": "gemini-3.8-flash-medium",
+                "default_effort": "medium",
                 "model_catalog": {
-                    "default": {"label": "Standard", "supports_thinking": True, "allowed_efforts": ["low", "medium", "high"]},
-                    "gemini-3.8-flash": {"label": "Gemini 3.8 Flash", "supports_thinking": True, "allowed_efforts": ["low", "medium", "high"]}
+                    "default": {"label": "Standard (Server-Default: gemini-3.8-flash-medium)", "supports_thinking": False, "allowed_efforts": []},
+                    "gemini-3.8-flash-medium": {"label": "Gemini 3.8 Flash (Medium)", "supports_thinking": False, "allowed_efforts": []},
+                    "gemini-4-argon-high": {"label": "Gemini 4 Argon (High)", "supports_thinking": False, "allowed_efforts": []}
                 }
             })
         ))
@@ -323,8 +324,8 @@ async def test_system_prompt_settings_modal_flow_e2e():
             "title": "Ursprünglicher Titel",
             "prompt": "Du bist ein Experte.",
             "include_gps": False,
-            "model": "gemini-3.8-flash",
-            "thinking_effort": "medium"
+            "model": "gemini-3.8-flash-medium",
+            "thinking_effort": None
         }
 
         saved_settings = {}
@@ -339,6 +340,7 @@ async def test_system_prompt_settings_modal_flow_e2e():
             elif route.request.method == "PUT":
                 payload = json.loads(route.request.post_data)
                 saved_settings.update(payload)
+                settings_state.update(payload)
                 if "title" in payload:
                     sessions_state[0]["title"] = payload["title"]
                 await route.fulfill(
@@ -388,15 +390,18 @@ async def test_system_prompt_settings_modal_flow_e2e():
         modal = page.locator("#system-prompt-modal")
         await expect(modal).to_be_visible()
 
+        # Separate thinking effort select must not exist
+        await expect(page.locator("#chat-thinking-effort-select")).to_have_count(0)
+
         # Modify values
         title_input = page.locator("#chat-title-input")
         prompt_input = page.locator("#system-prompt-input")
-        effort_select = page.locator("#chat-thinking-effort-select")
+        model_select = page.locator("#chat-model-select")
         gps_checkbox = page.locator("#gps-setting-input")
 
         await title_input.fill("Aktualisierter Chat-Titel")
         await prompt_input.fill("Neuer maßgeschneiderter System-Prompt")
-        await effort_select.select_option("high")
+        await model_select.select_option("gemini-4-argon-high")
         await gps_checkbox.check()
 
         # Save settings
@@ -409,11 +414,13 @@ async def test_system_prompt_settings_modal_flow_e2e():
         # Verify saved payload
         assert saved_settings.get("title") == "Aktualisierter Chat-Titel"
         assert saved_settings.get("prompt") == "Neuer maßgeschneiderter System-Prompt"
-        assert saved_settings.get("thinking_effort") == "high"
+        assert saved_settings.get("model") == "gemini-4-argon-high"
+        assert saved_settings.get("thinking_effort") is None
         assert saved_settings.get("include_gps") is True
 
-        # Header title must reflect the update
+        # Header title and model indicator must reflect the update
         await expect(page.locator("#header-chat-title")).to_have_text("Aktualisierter Chat-Titel")
+        await expect(page.locator("#session-model-indicator")).to_have_text("Gemini 4 Argon (High)")
 
         await browser.close()
 

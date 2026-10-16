@@ -26,11 +26,11 @@ Die Anwendung ist ein generischer, agentischer KI-Chat mit persistentem Gedächt
 - Die Python Web-App ruft das Tool lokal via asynchronem Subprozess auf (`asyncio.create_subprocess_exec`), übergibt den Kontext (Text oder Dateipfade zu Bildern) und verarbeitet die Ausgabe in Echtzeit.
 - Die Textgenerierung erfolgt über Live-Token-Streaming (`agy --output-format stream-json`), wobei Chunks per Server-Sent Events (SSE) an das Frontend gestreamt und dort progressiv als Markdown gerendert werden.
 
-### 2.5 Modell- & Thinking-Effort-Konfiguration
-- **Katalogunterstützung:** Der Benutzer kann für jede Chat-Sitzung flexibel das KI-Modell und die Thinking-Tiefe (Reasoning Effort) festlegen.
-- **Unterstützte Modelle:** Google Gemini (`gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.1-pro`), Anthropic Claude (`claude-sonnet-4-6`, `claude-opus-4-6-thinking`) und Open-Source-Modelle (`gpt-oss-120b-medium`).
-- **Thinking Effort:** Für Modelle mit nativer Thinking-Unterstützung (`supports_thinking: true`) können Stufen wie `low`, `medium` oder `high` gewählt werden (Gemini 3.1 Pro: `low`/`high`; Flash: `low`/`medium`/`high`). Modelle ohne Thinking-Effort-Support lassen das Flag automatisch aus.
-- **Header-Badge & Einstellungen:** Das aktive Modell und die Denkstufe werden als Badge im Chat-Header angezeigt und können über das Einstellungs-Zahnrad (`[ ⚙️ ]`) angepasst werden.
+### 2.5 Dynamische Modell-Konfiguration (`agy models`)
+- **Dynamischer Katalog & Caching:** Das Backend fragt die verfügbaren Modelle dynamisch über `agy models` ab, bereinigt Spinner-/ANSI-Ausgaben, parst die Modell-IDs samt Anzeigenamen (`<model_id>\t<label>`) und cacht den Katalog im Speicher (`AGYService.get_model_catalog()`). Falls `agy` nicht erreichbar ist, greift der aktuelle Fallback-Katalog in `app/core/config.py`.
+- **Unterstützte Modelle (1:1 aus `agy models`):** Google Gemini (`gemini-4-argon-medium`, `gemini-4-argon-high`, `gemini-4-argon-low`, `gemini-3.8-flash-high`, `gemini-3.8-flash-medium`, `gemini-3.8-flash-low`), Anthropic Claude (`claude-opus-5-5-low`, `claude-opus-5-5-medium`, `claude-opus-5-5-high`, `claude-sonnet-5-5-low`, `claude-sonnet-5-5-medium`, `claude-sonnet-5-5-high`) und Open-Source-Modelle (`gpt-oss-120b-medium`).
+- **Altdaten-Migration:** Bestehende Sessions mit früheren Basis-Modellnamen (z. B. `gemini-3.8-flash` + `thinking_effort: "high"`) werden automatisch auf die entsprechende `agy models`-ID (`gemini-3.8-flash-high`) aufgelöst.
+- **Header-Badge & Einstellungen:** Das aktive Modell (inklusive seiner Reasoning-Stufe im Label, z. B. `Gemini 4 Argon (High)`) wird als Badge im Chat-Header angezeigt und kann über das Einstellungs-Zahnrad (`[ ⚙️ ]`) pro Session ausgewählt werden.
 
 ### 2.6 Multi-User-Authentifizierung & Sicherheit
 - **Benutzerverwaltung:** Das System unterstützt isolierte Multi-User-Instanzen über eine serverseitige Konfigurationsdatei (`data/config/users.json`).
@@ -77,8 +77,8 @@ Die Anwendung ist ein generischer, agentischer KI-Chat mit persistentem Gedächt
     "created_at": "2026-09-28T12:00:00Z",
     "system_prompt": "Optionaler benutzerspezifischer System-Prompt",
     "include_gps": false,
-    "model": "gemini-3.8-flash",
-    "thinking_effort": "medium",
+    "model": "gemini-3.8-flash-medium",
+    "thinking_effort": null,
     "agy_conversation_id": "conv-987...",
     "history": [
       {

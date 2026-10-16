@@ -47,10 +47,11 @@ async def get_sessions_endpoint(username: str = Depends(get_current_user)):
 
 @router.get("/models/catalog")
 async def get_models_catalog_endpoint():
+    catalog = await agy_client.get_model_catalog()
     return {
         "default_model": AGY_DEFAULT_MODEL,
         "default_effort": AGY_DEFAULT_THINKING_EFFORT,
-        "model_catalog": MODEL_CATALOG
+        "model_catalog": catalog
     }
 
 
@@ -169,6 +170,9 @@ async def update_settings_endpoint(session_id: str, req: SessionSettingsRequest,
     if not exists:
         logger.warning(f"Settings update requested for non-existent session {session_id} by user '{username}'")
         raise HTTPException(status_code=404, detail="Session not found")
+
+    if req.model and req.model != "default" and req.model not in MODEL_CATALOG:
+        await agy_client.get_model_catalog()
 
     ok, err = validate_model_and_effort(req.model, req.thinking_effort)
     if not ok:

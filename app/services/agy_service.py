@@ -12,7 +12,9 @@ from app.core.config import (
     ICON_GENERATION_TIMEOUT_SECONDS,
     AGY_DEFAULT_MODEL,
     AGY_DEFAULT_THINKING_EFFORT,
+    EFFORT_SUFFIXES,
     MODEL_CATALOG,
+    parse_agy_models_output,
     resolve_session_model_and_effort,
     AGY_EXECUTABLE_PATH,
     AGY_CONVERSATIONS_DIR,
@@ -24,6 +26,73 @@ logger = logging.getLogger(__name__)
 class AGYService:
     def __init__(self, executable_path: str = AGY_EXECUTABLE_PATH):
         self.executable_path = executable_path
+        self._cached_model_catalog: Optional[Dict[str, Any]] = None
+        self._catalog_lock = asyncio.Lock()
+
+    async def get_model_catalog(self, force_refresh: bool = False) -> Dict[str, Any]:
+        """
+        Fetches available models dynamically via `agy models` and caches the result in memory.
+        Falls back to the static MODEL_CATALOG on error or if the CLI is unavailable.
+        """
+        if self._cached_model_catalog is not None and not force_refresh:
+            return self._cached_model_catalog
+
+        async with self._catalog_lock:
+            if self._cached_model_catalog is not None and not force_refresh:
+                return self._cached_model_catalog
+
+            cmd = [self.executable_path, "models"]
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                try:
+                    stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                        process.communicate(), timeout=10.0
+                    )
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.communicate()
+                    logger.warning(
+                        "Timeout beim Abrufen von 'agy models' (10s). Verwende statischen Fallback-Katalog."
+                    )
+                    self._cached_model_catalog = dict(MODEL_CATALOG)
+                    return self._cached_model_catalog
+
+                if process.returncode == 0:
+                    stdout_text = stdout_bytes.decode("utf-8", errors="replace")
+                    parsed = parse_agy_models_output(stdout_text)
+                    if len(parsed) > 1:
+                        MODEL_CATALOG.update(parsed)
+                        self._cached_model_catalog = dict(parsed)
+                        logger.info(
+                            f"Modell-Katalog erfolgreich via 'agy models' geladen ({len(parsed) - 1} Modelle)."
+                        )
+                        return self._cached_model_catalog
+                    logger.warning(
+                        "Keine Modelle in der Ausgabe von 'agy models' erkannt. Verwende Fallback-Katalog."
+                    )
+                else:
+                    stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
+                    logger.warning(
+                        f"'agy models' fehlgeschlagen mit Exit-Code {process.returncode}: {stderr_text}. "
+                        "Verwende Fallback-Katalog."
+                    )
+            except FileNotFoundError:
+                logger.warning(
+                    f"agy Executable ('{self.executable_path}') nicht gefunden für 'agy models'. "
+                    "Verwende Fallback-Katalog."
+                )
+            except Exception as e:
+                logger.error(
+                    f"Unerwarteter Fehler beim Abrufen von 'agy models': {e}",
+                    exc_info=True,
+                )
+
+            self._cached_model_catalog = dict(MODEL_CATALOG)
+            return self._cached_model_catalog
 
     def conversation_exists(self, conv_id: Optional[str]) -> bool:
         if not conv_id or not isinstance(conv_id, str):
@@ -131,7 +200,7 @@ class AGYService:
         effective_effort = thinking_effort
         if effective_model and effective_model != "default":
             spec = MODEL_CATALOG.get(effective_model, {})
-            if not spec.get("supports_thinking", True):
+            if not spec.get("supports_thinking", False) or effective_model.endswith(EFFORT_SUFFIXES):
                 effective_effort = None
 
         cmd = [self.executable_path, "--dangerously-skip-permissions", "--output-format", "stream-json"]
@@ -259,7 +328,7 @@ class AGYService:
         effective_effort = thinking_effort
         if effective_model and effective_model != "default":
             spec = MODEL_CATALOG.get(effective_model, {})
-            if not spec.get("supports_thinking", True):
+            if not spec.get("supports_thinking", False) or effective_model.endswith(EFFORT_SUFFIXES):
                 effective_effort = None
 
         cmd = [self.executable_path, "--dangerously-skip-permissions"]

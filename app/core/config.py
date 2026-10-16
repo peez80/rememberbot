@@ -126,48 +126,77 @@ AGY_CONVERSATIONS_DIR = get_env_str(
     "AGY_CONVERSATIONS_DIR",
     os.path.expanduser("~/.gemini/antigravity-cli/conversations")
 )
-AGY_DEFAULT_MODEL = get_env_str("AGY_DEFAULT_MODEL", "gemini-3.8-flash")
-AGY_DEFAULT_THINKING_EFFORT = get_env_str("AGY_DEFAULT_THINKING_EFFORT", "medium").lower()
+EFFORT_SUFFIXES = ("-low", "-medium", "-high", "-xhigh", "-max")
 
-# --- Network & CORS Settings ---
-CORS_ALLOWED_ORIGINS = get_env_list(
-    "CORS_ALLOWED_ORIGINS",
-    ["http://localhost:8000", "http://127.0.0.1:8000"]
-)
-
-MODEL_CATALOG = {
-    "default": {
-        "label": f"Standard (Server-Default: {AGY_DEFAULT_MODEL})",
-        "allowed_efforts": ["low", "medium", "high"],
-        "default_effort": AGY_DEFAULT_THINKING_EFFORT,
-        "supports_thinking": True,
-    },
-    "gemini-3.1-pro": {
-        "label": "Gemini 3.1 Pro",
-        "allowed_efforts": ["low", "high"],
-        "default_effort": "high",
-        "supports_thinking": True,
-    },
-    "gemini-3.8-flash": {
-        "label": "Gemini 3.8 Flash",
-        "allowed_efforts": ["low", "medium", "high"],
-        "default_effort": "medium",
-        "supports_thinking": True,
-    },
-    "gemini-3.7-flash": {
-        "label": "Gemini 3.7 Flash",
-        "allowed_efforts": ["low", "medium", "high"],
-        "default_effort": "high",
-        "supports_thinking": True,
-    },
-    "claude-sonnet-4-6": {
-        "label": "Claude Sonnet 4.6 (Thinking)",
+DEFAULT_MODEL_CATALOG = {
+    "gemini-4-argon-medium": {
+        "label": "Gemini 4 Argon (Medium)",
         "allowed_efforts": [],
         "default_effort": None,
         "supports_thinking": False,
     },
-    "claude-opus-4-6-thinking": {
-        "label": "Claude Opus 4.6 (Thinking)",
+    "gemini-4-argon-high": {
+        "label": "Gemini 4 Argon (High)",
+        "allowed_efforts": [],
+        "default_effort": None,
+        "supports_thinking": False,
+    },
+    "gemini-4-argon-low": {
+        "label": "Gemini 4 Argon (Low)",
+        "allowed_efforts": [],
+        "default_effort": None,
+        "supports_thinking": False,
+    },
+    "gemini-3.8-flash-high": {
+        "label": "Gemini 3.8 Flash (High)",
+        "allowed_efforts": [],
+        "default_effort": None,
+        "supports_thinking": False,
+    },
+    "gemini-3.8-flash-medium": {
+        "label": "Gemini 3.8 Flash (Medium)",
+        "allowed_efforts": [],
+        "default_effort": None,
+        "supports_thinking": False,
+    },
+    "gemini-3.8-flash-low": {
+        "label": "Gemini 3.8 Flash (Low)",
+        "allowed_efforts": [],
+        "default_effort": None,
+        "supports_thinking": False,
+    },
+    "claude-opus-5-5-low": {
+        "label": "Claude Opus 5.5 (Low)",
+        "allowed_efforts": [],
+        "default_effort": None,
+        "supports_thinking": False,
+    },
+    "claude-opus-5-5-medium": {
+        "label": "Claude Opus 5.5 (Medium)",
+        "allowed_efforts": [],
+        "default_effort": None,
+        "supports_thinking": False,
+    },
+    "claude-opus-5-5-high": {
+        "label": "Claude Opus 5.5 (High)",
+        "allowed_efforts": [],
+        "default_effort": None,
+        "supports_thinking": False,
+    },
+    "claude-sonnet-5-5-low": {
+        "label": "Claude Sonnet 5.5 (Low)",
+        "allowed_efforts": [],
+        "default_effort": None,
+        "supports_thinking": False,
+    },
+    "claude-sonnet-5-5-medium": {
+        "label": "Claude Sonnet 5.5 (Medium)",
+        "allowed_efforts": [],
+        "default_effort": None,
+        "supports_thinking": False,
+    },
+    "claude-sonnet-5-5-high": {
+        "label": "Claude Sonnet 5.5 (High)",
         "allowed_efforts": [],
         "default_effort": None,
         "supports_thinking": False,
@@ -180,6 +209,76 @@ MODEL_CATALOG = {
     },
 }
 
+AGY_DEFAULT_THINKING_EFFORT = get_env_str("AGY_DEFAULT_THINKING_EFFORT", "medium").lower()
+_raw_default_model = get_env_str("AGY_DEFAULT_MODEL", "gemini-3.8-flash-medium")
+if (
+    _raw_default_model not in DEFAULT_MODEL_CATALOG
+    and f"{_raw_default_model}-{AGY_DEFAULT_THINKING_EFFORT}" in DEFAULT_MODEL_CATALOG
+):
+    AGY_DEFAULT_MODEL = f"{_raw_default_model}-{AGY_DEFAULT_THINKING_EFFORT}"
+elif (
+    _raw_default_model not in DEFAULT_MODEL_CATALOG
+    and f"{_raw_default_model}-medium" in DEFAULT_MODEL_CATALOG
+):
+    AGY_DEFAULT_MODEL = f"{_raw_default_model}-medium"
+else:
+    AGY_DEFAULT_MODEL = _raw_default_model
+
+# --- Network & CORS Settings ---
+CORS_ALLOWED_ORIGINS = get_env_list(
+    "CORS_ALLOWED_ORIGINS",
+    ["http://localhost:8000", "http://127.0.0.1:8000"]
+)
+
+MODEL_CATALOG = {
+    "default": {
+        "label": f"Standard (Server-Default: {AGY_DEFAULT_MODEL})",
+        "allowed_efforts": [],
+        "default_effort": None,
+        "supports_thinking": False,
+    },
+    **DEFAULT_MODEL_CATALOG,
+}
+
+
+def parse_agy_models_output(raw_output: str) -> dict[str, dict]:
+    """
+    Parses the stdout of `agy models` into a MODEL_CATALOG-compatible dictionary.
+    Handles carriage-return spinner prefixes, ANSI escape sequences, and tab/multi-space column separation.
+    """
+    parsed: dict[str, dict] = {
+        "default": {
+            "label": f"Standard (Server-Default: {AGY_DEFAULT_MODEL})",
+            "allowed_efforts": [],
+            "default_effort": None,
+            "supports_thinking": False,
+        }
+    }
+    if not raw_output:
+        return parsed
+
+    ansi_escape_re = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
+    for raw_line in raw_output.split("\n"):
+        # Take the final segment after any carriage return (spinner overwrite) and strip ANSI codes
+        segment = raw_line.split("\r")[-1]
+        clean_line = ansi_escape_re.sub("", segment).strip()
+        if not clean_line or "fetching available models" in clean_line.lower():
+            continue
+        parts = re.split(r"\t+|\s{2,}", clean_line, maxsplit=1)
+        if len(parts) != 2:
+            continue
+        model_id, label = parts[0].strip(), parts[1].strip()
+        if not model_id or not label or not re.match(r"^[a-zA-Z0-9._-]+$", model_id):
+            continue
+        parsed[model_id] = {
+            "label": label,
+            "allowed_efforts": [],
+            "default_effort": None,
+            "supports_thinking": False,
+        }
+    return parsed
+
+
 def validate_model_and_effort(model: str | None, effort: str | None) -> tuple[bool, str | None]:
     """
     Validates whether the requested model and thinking_effort combination is supported.
@@ -190,49 +289,85 @@ def validate_model_and_effort(model: str | None, effort: str | None) -> tuple[bo
     else:
         normalized_model = model.strip()
 
+    normalized_effort = effort.strip().lower() if effort and str(effort).strip() else None
+    if normalized_effort == "default":
+        normalized_effort = None
+
+    # Allow legacy base model + effort combinations (e.g. "gemini-3.8-flash" + "high")
+    if normalized_model not in MODEL_CATALOG and normalized_effort:
+        candidate = f"{normalized_model}-{normalized_effort}"
+        if candidate in MODEL_CATALOG:
+            normalized_model = candidate
+            normalized_effort = None
+    elif normalized_model not in MODEL_CATALOG and f"{normalized_model}-medium" in MODEL_CATALOG:
+        if normalized_effort is None:
+            normalized_model = f"{normalized_model}-medium"
+
     if normalized_model not in MODEL_CATALOG:
         allowed_models = ", ".join(list(MODEL_CATALOG.keys()))
         return False, f"Unbekanntes Modell '{model}'. Erlaubte Modelle: {allowed_models}."
 
     model_spec = MODEL_CATALOG[normalized_model]
-    supports_thinking = model_spec.get("supports_thinking", True)
+    supports_thinking = model_spec.get("supports_thinking", False)
     allowed_efforts = model_spec.get("allowed_efforts", [])
 
-    # If the model does not support manual thinking effort (e.g. Claude, GPT-OSS)
     if not supports_thinking:
-        if effort is not None and str(effort).strip() != "" and str(effort).strip().lower() != "default":
-            return False, f"Modell '{model_spec.get('label', model)}' unterstützt keine manuelle Thinking-Effort-Einstellung."
+        if normalized_effort is not None:
+            # Allow matching suffix effort (e.g. model="gemini-4-argon-high", effort="high")
+            if normalized_model.endswith(f"-{normalized_effort}"):
+                return True, None
+            return (
+                False,
+                f"Modell '{model_spec.get('label', model)}' unterstützt den Thinking Effort '{effort}' nicht.",
+            )
         return True, None
 
-    # Model supports thinking
-    if not effort or effort == "default":
+    if not normalized_effort:
         return True, None
 
-    normalized_effort = effort.strip().lower()
     if normalized_effort not in allowed_efforts:
         allowed_str = ", ".join(allowed_efforts)
-        return False, f"Modell '{model_spec.get('label', model)}' unterstützt den Thinking Effort '{effort}' nicht. Erlaubte Stufen: {allowed_str}."
+        return (
+            False,
+            f"Modell '{model_spec.get('label', model)}' unterstützt den Thinking Effort '{effort}' nicht. Erlaubte Stufen: {allowed_str}.",
+        )
 
     return True, None
 
 
 def resolve_session_model_and_effort(model: str | None, thinking_effort: str | None) -> tuple[str, str | None]:
     """
-    Resolves effective model and thinking effort, falling back to defaults if not set
-    or if an obsolete/unknown model name is provided.
+    Resolves effective model and thinking effort, migrating legacy base model + effort
+    pairs (e.g. 'gemini-3.8-flash' + 'high' -> 'gemini-3.8-flash-high') and falling back
+    to AGY_DEFAULT_MODEL for unknown or obsolete model names.
     """
-    if not model or model == "default" or model not in MODEL_CATALOG:
+    clean_model = model.strip() if model and isinstance(model, str) else ""
+    clean_effort = (
+        str(thinking_effort).strip().lower()
+        if thinking_effort and str(thinking_effort).strip()
+        else None
+    )
+
+    if not clean_model or clean_model == "default":
         eff_model = AGY_DEFAULT_MODEL
+    elif clean_model in MODEL_CATALOG:
+        eff_model = clean_model
+    elif clean_effort and f"{clean_model}-{clean_effort}" in MODEL_CATALOG:
+        eff_model = f"{clean_model}-{clean_effort}"
+    elif f"{clean_model}-{AGY_DEFAULT_THINKING_EFFORT}" in MODEL_CATALOG:
+        eff_model = f"{clean_model}-{AGY_DEFAULT_THINKING_EFFORT}"
+    elif f"{clean_model}-medium" in MODEL_CATALOG:
+        eff_model = f"{clean_model}-medium"
     else:
-        eff_model = model.strip()
+        eff_model = AGY_DEFAULT_MODEL
 
     spec = MODEL_CATALOG.get(eff_model, {})
-    if not spec.get("supports_thinking", True):
+    if not spec.get("supports_thinking", False) or eff_model.endswith(EFFORT_SUFFIXES):
         return eff_model, None
 
     allowed_efforts = spec.get("allowed_efforts", [])
-    if thinking_effort and str(thinking_effort).strip().lower() in allowed_efforts:
-        return eff_model, str(thinking_effort).strip().lower()
+    if clean_effort and clean_effort in allowed_efforts:
+        return eff_model, clean_effort
 
     default_eff = spec.get("default_effort", AGY_DEFAULT_THINKING_EFFORT)
     if default_eff in allowed_efforts:

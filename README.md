@@ -151,15 +151,15 @@ Docker Compose automatically loads variables from `.env`.
 | `THUMBNAIL_MAX_DIMENSION` | `int` | `400` | Maximum width/height in pixels for cached thumbnails. |
 | `AGY_EXECUTABLE_PATH` | `str` | `agy` | Command or path to the `antigravity-cli` executable. |
 | `AGY_CONVERSATIONS_DIR` | `str` | `~/.gemini/...` | Path to `antigravity-cli` conversations database directory. |
-| `AGY_DEFAULT_MODEL` | `str` | `gemini-3.8-flash` | Global default model passed to `agy` CLI (`gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.1-pro`, `claude-sonnet-4-6`, `claude-opus-4-6-thinking`, `gpt-oss-120b-medium`). |
-| `AGY_DEFAULT_THINKING_EFFORT` | `str` | `medium` | Default reasoning depth for models with thinking support (`low`, `medium`, `high`). |
+| `AGY_DEFAULT_MODEL` | `str` | `gemini-3.8-flash-medium` | Global default model passed to `agy` CLI (models are dynamically discovered via `agy models`, e.g., `gemini-3.8-flash-medium`, `gemini-4-argon-high`, `claude-sonnet-5-5-medium`, `gpt-oss-120b-medium`). |
+| `AGY_DEFAULT_THINKING_EFFORT` | `str` | `medium` | Fallback reasoning depth for legacy base model identifiers (`low`, `medium`, `high`). |
 | `ICON_GENERATION_TIMEOUT_SECONDS` | `float` | `180.0` | Timeout in seconds for background icon generation. |
 | `LOG_LEVEL` | `str` | `INFO` | Log severity level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). |
 | `LOG_FORMAT` | `str` | `text` | Log format: `text` (human-readable) or `json` (structured NDJSON). |
 | `CORS_ALLOWED_ORIGINS` | `list[str]` | `http://localhost:8000,http://127.0.0.1:8000` | Comma-separated list of allowed CORS origins. |
 
 > [!NOTE]
-> **Per-Session Customization:** In addition to environment defaults, users can configure the model and thinking effort per chat session via the session settings modal (⚙️ icon). The active session's model and effort are shown as a badge in the chat header.
+> **Per-Session Customization:** In addition to environment defaults, users can select the AI model (including its reasoning effort variant) per chat session via the session settings modal (⚙️ icon), populated dynamically from `agy models`. The active session's model is shown as a badge in the chat header.
 
 ## CI/CD Pipeline
 
