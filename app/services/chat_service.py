@@ -260,19 +260,24 @@ class ChatService:
         attachments: list = None,
         display_msg: str = None
     ) -> AsyncGenerator[str, None]:
-        prep = await self._prepare_chat_turn(
-            username=username,
-            session_id=session_id,
-            message=message,
-            location=location,
-            valid_uploads=valid_uploads,
-            image_paths=image_paths,
-            image_urls=image_urls,
-            images_data=images_data,
-            files_data=files_data,
-            attachments=attachments,
-            display_msg=display_msg
-        )
+        supervisor.register_session(username, session_id)
+        try:
+            prep = await self._prepare_chat_turn(
+                username=username,
+                session_id=session_id,
+                message=message,
+                location=location,
+                valid_uploads=valid_uploads,
+                image_paths=image_paths,
+                image_urls=image_urls,
+                images_data=images_data,
+                files_data=files_data,
+                attachments=attachments,
+                display_msg=display_msg
+            )
+        except BaseException:
+            supervisor.unregister_session(username, session_id)
+            raise
 
         queue = asyncio.Queue()
 

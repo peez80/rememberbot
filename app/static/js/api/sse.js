@@ -2,10 +2,11 @@
  * SSE streaming response consumer using the Fetch ReadableStream API.
  */
 
-export const readSSEStream = async (response, { onDelta, onDone, onError }) => {
+export const readSSEStream = async (response, { onDelta, onDone, onError, onDisconnect }) => {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let sseBuffer = "";
+    let receivedTerminalEvent = false;
 
     try {
         while (true) {
@@ -24,8 +25,10 @@ export const readSSEStream = async (response, { onDelta, onDone, onError }) => {
                         if (event.type === "delta") {
                             if (onDelta) onDelta(event);
                         } else if (event.type === "done") {
+                            receivedTerminalEvent = true;
                             if (onDone) onDone(event);
                         } else if (event.type === "error") {
+                            receivedTerminalEvent = true;
                             if (onError) onError(event);
                         }
                     } catch (e) {
@@ -34,7 +37,15 @@ export const readSSEStream = async (response, { onDelta, onDone, onError }) => {
                 }
             }
         }
+        if (!receivedTerminalEvent && onDisconnect) {
+            onDisconnect(new Error("SSE stream closed before completion"));
+        }
     } catch (err) {
-        if (onError) onError({ error: err.message });
+        if (onDisconnect) {
+            onDisconnect(err);
+        } else if (onError) {
+            onError({ error: err.message });
+        }
     }
 };
+

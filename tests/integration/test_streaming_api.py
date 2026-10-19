@@ -72,3 +72,27 @@ async def test_chat_endpoint_streaming_sse(
         ai_msg = mock_save_msg.call_args_list[1][0][2]
         assert user_msg["text"] == "Erzähle mir was"
         assert ai_msg["text"] == "Token1 Token2"
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_generator_unregisters_session_on_prepare_error():
+    """Verify that supervisor.is_session_active is cleared if _prepare_chat_turn raises in stream_chat_generator."""
+    from app.core.tasks import supervisor
+    from app.services.chat_service import chat_service
+
+    username = "testuser"
+    session_id = "sess-prep-err"
+    supervisor.register_session(username, session_id)
+    assert supervisor.is_session_active(username, session_id) is True
+
+    with patch.object(chat_service, "_prepare_chat_turn", side_effect=RuntimeError("Prepare failed")):
+        with pytest.raises(RuntimeError, match="Prepare failed"):
+            gen = chat_service.stream_chat_generator(
+                username=username,
+                session_id=session_id,
+                message="Hallo"
+            )
+            await gen.__anext__()
+
+    assert supervisor.is_session_active(username, session_id) is False
+

@@ -12,7 +12,7 @@ const originalFetch = window.fetch;
 
 export const apiFetch = async (url, options = {}) => {
     const response = await originalFetch(url, options);
-    if (response.status === 401 && !url.includes('/api/auth/status') && !url.includes('/api/auth/login') && !url.includes('/models/catalog')) {
+    if (response.status === 401 && !options.skipAuthHandler && !url.includes('/api/auth/status') && !url.includes('/api/auth/login') && !url.includes('/models/catalog')) {
         if (onAuthErrorHandler) {
             onAuthErrorHandler();
         }
@@ -73,7 +73,7 @@ export const getSessionHistory = async (sessionId) => {
 };
 
 export const getSessionStatus = async (sessionId) => {
-    return apiFetch(`/api/sessions/${sessionId}/status`);
+    return apiFetch(`/api/sessions/${sessionId}/status`, { skipAuthHandler: true });
 };
 
 export const updateSessionSettings = async (sessionId, { prompt, include_gps, model, thinking_effort }) => {
@@ -156,13 +156,14 @@ export const importSessionArchive = async (sessionId, file, { onUploadProgress, 
     });
 };
 
-export const sendChatMessage = async (sessionId, formData) => {
+export const sendChatMessage = async (sessionId, formData, { signal } = {}) => {
     return apiFetch(`/api/sessions/${sessionId}/chat`, {
         method: "POST",
         headers: {
             "Accept": "text/event-stream, application/json"
         },
-        body: formData
+        body: formData,
+        signal
     });
 };
 

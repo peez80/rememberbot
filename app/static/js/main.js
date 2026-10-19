@@ -300,6 +300,58 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     };
 
+    const recoverInterruptedChat = async (sessionId, baselineHistoryCount) => {
+        const maxAttempts = state.streamWasHidden ? 3 : 1;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                const statusRes = await api.getSessionStatus(sessionId);
+                if (!statusRes.ok) {
+                    return false;
+                }
+                const statusData = await statusRes.json();
+                if (statusData.is_processing) {
+                    if (state.activeSubmittingSessionId === sessionId) {
+                        state.activeSubmittingSessionId = null;
+                    }
+                    if (state.currentSessionId === sessionId) {
+                        await selectSession(sessionId, true);
+                    } else {
+                        startPollingSession(sessionId);
+                    }
+                    return true;
+                }
+
+                const histRes = await api.getSessionHistory(sessionId);
+                if (!histRes.ok) {
+                    return false;
+                }
+                const history = await histRes.json();
+                if (Array.isArray(history) && history.length > baselineHistoryCount) {
+                    if (state.activeSubmittingSessionId === sessionId) {
+                        state.activeSubmittingSessionId = null;
+                    }
+                    if (state.currentSessionId === sessionId) {
+                        await selectSession(sessionId, true);
+                    }
+                    try {
+                        const sessions = await api.getSessions();
+                        state.lastSessions = sessions;
+                        sidebarView.renderSessionList(sessions, selectSession, deleteSessionPrompt);
+                    } catch (_) {}
+                    return true;
+                }
+                return false;
+            } catch (err) {
+                if (attempt < maxAttempts) {
+                    await new Promise(resolve => setTimeout(resolve, 400));
+                } else {
+                    console.warn("Could not recover interrupted chat session", sessionId, err);
+                }
+            }
+        }
+        return false;
+    };
+
     const deleteSessionPrompt = async (session) => {
         if (confirm('Möchtest du diesen Chat wirklich löschen?')) {
             try {
@@ -430,6 +482,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const greetingEl = document.getElementById("initial-greeting");
             if (greetingEl) greetingEl.remove();
 
+            const baselineHistoryCount = state.currentSessionHistory.length;
             const now = new Date().toISOString();
             chatView.appendMessage(displayMsg, true, localImages, now, false, true, false, localNonImages);
             state.currentSessionHistory.push({
@@ -452,8 +505,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
             chatView.showTypingIndicator();
 
+            const streamAbortController = new AbortController();
+            state.activeStreamAbortController = streamAbortController;
+            state.streamWasHidden = (document.visibilityState === "hidden");
+
             try {
-                const response = await api.sendChatMessage(submittedSessionId, formData);
+                const response = await api.sendChatMessage(submittedSessionId, formData, {
+                    signal: streamAbortController.signal
+                });
 
                 if (!response.ok) {
                     chatView.removeTypingIndicator();
@@ -475,6 +534,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (contentType.includes("text/event-stream")) {
                     let accumulatedText = "";
                     let streamController = null;
+                    let streamDisconnected = false;
+                    let streamDisconnectError = null;
 
                     await readSSEStream(response, {
                         onDelta: (event) => {
@@ -512,16 +573,31 @@ document.addEventListener("DOMContentLoaded", () => {
                             if (state.currentSessionId === submittedSessionId) {
                                 chatView.appendErrorMessage(event.error || "Fehler bei der Antwortgenerierung.");
                             }
+                        },
+                        onDisconnect: (err) => {
+                            streamDisconnected = true;
+                            streamDisconnectError = err;
                         }
                     });
+
+                    if (streamDisconnected) {
+                        chatView.removeStreamingMessage(streamController);
+                        streamController = null;
+                        throw streamDisconnectError || new Error("SSE stream disconnected");
+                    }
 
                     chatView.removeTypingIndicator();
                     if (streamController && streamController.aiMsgDiv) {
                         streamController.aiMsgDiv.classList.remove("streaming");
                     }
 
-                    const sessions = await api.getSessions();
-                    sidebarView.renderSessionList(sessions, selectSession, deleteSessionPrompt);
+                    try {
+                        const sessions = await api.getSessions();
+                        state.lastSessions = sessions;
+                        sidebarView.renderSessionList(sessions, selectSession, deleteSessionPrompt);
+                    } catch (err) {
+                        console.warn("Failed to refresh sessions after stream", err);
+                    }
 
                 } else {
                     const data = await response.json();
@@ -566,12 +642,19 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
 
             } catch (error) {
-                chatView.removeTypingIndicator();
-                if (state.currentSessionId === submittedSessionId) {
-                    chatView.appendErrorMessage("Es gab einen Verbindungsfehler. Bitte versuche es später noch einmal.");
+                const recovered = await recoverInterruptedChat(submittedSessionId, baselineHistoryCount);
+                if (!recovered) {
+                    chatView.removeTypingIndicator();
+                    if (state.currentSessionId === submittedSessionId) {
+                        chatView.appendErrorMessage("Es gab einen Verbindungsfehler. Bitte versuche es später noch einmal.");
+                    }
+                    console.error("Error calling chat API", error);
                 }
-                console.error("Error calling chat API", error);
             } finally {
+                if (state.activeStreamAbortController === streamAbortController) {
+                    state.activeStreamAbortController = null;
+                    state.streamWasHidden = false;
+                }
                 if (state.activeSubmittingSessionId === submittedSessionId) {
                     state.activeSubmittingSessionId = null;
                 }
@@ -863,8 +946,24 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    // Visibility change sync
+    // Visibility change and network reconnect sync
     document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") {
+            if (state.activeStreamAbortController) {
+                state.streamWasHidden = true;
+            }
+            return;
+        }
+        if (document.visibilityState === "visible" && state.currentSessionId) {
+            if (state.streamWasHidden && state.activeStreamAbortController) {
+                state.activeStreamAbortController.abort();
+            } else if (state.activeSubmittingSessionId !== state.currentSessionId) {
+                selectSession(state.currentSessionId);
+            }
+        }
+    });
+
+    window.addEventListener("online", () => {
         if (document.visibilityState === "visible" && state.currentSessionId && state.activeSubmittingSessionId !== state.currentSessionId) {
             selectSession(state.currentSessionId);
         }

@@ -115,10 +115,10 @@ graph TD
 
 Das Frontend verzichtet auf schwere Frameworks und Build-Tools und setzt auf moderne, native ECMAScript-Module (`type="module"`):
 
-- **[`main.js`](file:///apps/app/static/js/main.js)**: Zentraler Application Orchestrator, dynamische Modell-Auswahl aus `/api/sessions/models/catalog`, Header-Modell-Badge, Event-Bus-Verbindung und entkoppelte SSE-Stream-Steuerung via `chatView`-Lifecycle-Methoden.
-- **[`state.js`](file:///apps/app/static/js/state.js)**: Zentraler, reaktiver UI-State (aktive Session, Submit-Locks, Nachrichten-Batches, Anhänge).
-- **[`api/client.js`](file:///apps/app/static/js/api/client.js)**: REST-Client mit globaler 401-Authentifizierungs-Abfanglogik und Modellkatalog-Abruf.
-- **[`api/sse.js`](file:///apps/app/static/js/api/sse.js)**: Streaming-Reader für Server-Sent Events via `ReadableStream`.
+- **[`main.js`](file:///apps/app/static/js/main.js)**: Zentraler Application Orchestrator, dynamische Modell-Auswahl aus `/api/sessions/models/catalog`, Header-Modell-Badge, Event-Bus-Verbindung, entkoppelte SSE-Stream-Steuerung via `chatView`-Lifecycle-Methoden sowie nahtloses Smartphone-Background/Resume-Recovery (`recoverInterruptedChat`, `visibilitychange`-Zombie-Stream-Ablösung und `online`-Reconnect).
+- **[`state.js`](file:///apps/app/static/js/state.js)**: Zentraler, reaktiver UI-State (aktive Session, Submit-Locks, Stream-AbortController, Nachrichten-Batches, Anhänge).
+- **[`api/client.js`](file:///apps/app/static/js/api/client.js)**: REST-Client mit globaler 401-Authentifizierungs-Abfanglogik, AbortSignal-Unterstützung und Modellkatalog-Abruf.
+- **[`api/sse.js`](file:///apps/app/static/js/api/sse.js)**: Streaming-Reader für Server-Sent Events via `ReadableStream` mit präziser Trennung zwischen expliziten Server-Fehler-Events (`onError`) und clientseitigen Verbindungs-/Stream-Abbrüchen (`onDisconnect`).
 - **[`components/chat_view.js`](file:///apps/app/static/js/components/chat_view.js)**: Rendern von Nachrichten, Markdown, `<details class="ai-reasoning">`-Blöcken, Dateikarten, Infinite-Scroll sowie Kapselung des SSE-Streaming-Lifecycles (`initStreamingMessage`, `updateStreamingMessage`, `finalizeStreamingMessage`, `removeStreamingMessage`) mit zustandsstabiler Aufklapp-Verwaltung (`manuallyOpened`) während des Streamings.
 - **[`components/sidebar_view.js`](file:///apps/app/static/js/components/sidebar_view.js)**: Session-Listenanzeige, Icon-Rendering, Löschen und Aktiv-Indikator.
 - **[`components/input_bar.js`](file:///apps/app/static/js/components/input_bar.js)**: Textarea-Auto-Resize, Drag-and-Drop, Paste und clientseitige Bildkompression (Canvas).
@@ -130,7 +130,7 @@ Das Frontend verzichtet auf schwere Frameworks und Build-Tools und setzt auf mod
 ## 4. Sicherheit & Robustheit
 
 1. **Zero Silent Failures**: Jeder Ausnahmefall wird mit strukturiertem Kontext und Traceback protokolliert.
-2. **Hintergrund-Absicherung**: SSE-Streams und Hintergrundaufgaben laufen bei Verbindungsabbrüchen via `asyncio.shield` und `BackgroundSupervisor` fehlerfrei bis zur Persistierung durch.
+2. **Hintergrund-Absicherung & Mobile Stream-Recovery**: SSE-Streams und Hintergrundaufgaben laufen bei Verbindungsabbrüchen via `asyncio.shield` und `BackgroundSupervisor` fehlerfrei bis zur Persistierung durch. Wird ein laufender Chat auf Mobilgeräten durch App-Wechsel oder Standby unterbrochen, prüft das Frontend beim Wiederöffnen automatisch den Server-Status (`/status` & `/history`) und zeigt ohne Fehlersymptome entweder das fertige Ergebnis oder die aktive Working-Animation samt Status-Polling an.
 3. **ZipSlip- & Zip-Bomb-Schutz**: ZIP-Importe weisen bösartige Pfade (`..` oder absolute Pfade) strikt ab und begrenzen das dekomprimierte Gesamtvolumen (max. 10.000 MB) sowie die Dateianzahl (max. 10.000 Dateien), um Archiv-Dekompressionsexplosionen (Zip Bombs) zu verhindern. Import-Uploads werden im Router speicherschonend gestreamt (Chunked Reading, max. 2000 MB) zur Vermeidung von OOM-DoS.
 4. **Session-ID Strict Validation**: Alle API-Routen, Storage-Funktionen und `agy`-Prüfungen validieren Session-IDs strikt gegen ein Regex-Muster (`^[a-zA-Z0-9_-]{1,64}$`), wodurch Path Traversal und Subdirectory-Injection vollständig ausgeschlossen sind.
 5. **Defense-in-Depth File & Thumbnail Serving**: Alle Datei-Auslieferungen (`/uploads/*`, `/uploads/*/thumbnails/*`, `/app/data/*`) erzwingen restriktive HTTP-Security-Header (`Content-Security-Policy: default-src 'none'; sandbox` und `X-Content-Type-Options: nosniff`), um XSS durch manipulierte SVG-, HTML- oder Bilddateien zu unterbinden.
