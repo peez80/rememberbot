@@ -166,6 +166,29 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     inputBar.setupPaste();
 
+    const notifyRecoveryWake = () => {
+        state.recoveryResetRequested = true;
+        if (state.recoveryWakeListeners) {
+            state.recoveryWakeListeners.forEach(resolve => resolve());
+            state.recoveryWakeListeners.clear();
+        }
+    };
+
+    const waitForVisibleOrDelay = (delayMs) => new Promise(resolve => {
+        if (document.visibilityState === "hidden") {
+            state.recoveryWakeListeners.add(resolve);
+            return;
+        }
+        let timer = null;
+        const wake = () => {
+            if (timer) clearTimeout(timer);
+            state.recoveryWakeListeners.delete(wake);
+            resolve();
+        };
+        state.recoveryWakeListeners.add(wake);
+        timer = setTimeout(wake, delayMs);
+    });
+
     // Background session polling
     const stopPollingSession = (sessionId) => {
         if (state.activePollTimers.has(sessionId)) {
@@ -178,18 +201,22 @@ document.addEventListener("DOMContentLoaded", () => {
         if (state.activePollTimers.has(sessionId)) return;
 
         const timerId = setInterval(async () => {
+            if (document.visibilityState === "hidden") return;
             try {
                 const res = await api.getSessionStatus(sessionId);
                 if (!res.ok) {
-                    stopPollingSession(sessionId);
+                    if (res.status === 404) {
+                        stopPollingSession(sessionId);
+                    }
                     return;
                 }
                 const data = await res.json();
                 if (!data.is_processing) {
-                    stopPollingSession(sessionId);
                     if (state.currentSessionId === sessionId && state.activeSubmittingSessionId !== sessionId) {
-                        await selectSession(sessionId);
+                        const loaded = await selectSession(sessionId, true);
+                        if (!loaded) return;
                     }
+                    stopPollingSession(sessionId);
                     const sessions = await api.getSessions();
                     sidebarView.renderSessionList(sessions, selectSession, deleteSessionPrompt);
                 }
@@ -205,7 +232,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const selectSession = async (sessionId, forceReload = false) => {
         const isSwitchingSession = (state.currentSessionId !== sessionId);
         if (!forceReload && !isSwitchingSession && state.activeSubmittingSessionId === sessionId) {
-            return;
+            return false;
         }
         const requestId = ++state.selectSessionCounter;
         setCurrentSessionId(sessionId);
@@ -236,39 +263,50 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         try {
-            const [promptRes, response] = await Promise.all([
+            const [promptResult, historyResult] = await Promise.allSettled([
                 api.getSessionSettings(sessionId),
                 api.getSessionHistory(sessionId)
             ]);
 
-            if (requestId !== state.selectSessionCounter) return;
-            if (state.currentSessionId !== sessionId) return;
+            if (requestId !== state.selectSessionCounter) return false;
+            if (state.currentSessionId !== sessionId) return false;
 
-            if (promptRes.ok) {
-                const promptData = await promptRes.json();
-                if (state.currentSessionId === sessionId) {
-                    if (systemPromptInput) systemPromptInput.value = promptData.prompt || "";
-                    state.currentSessionGpsEnabled = promptData.include_gps || false;
-                    if (gpsSettingInput) {
-                        gpsSettingInput.checked = state.currentSessionGpsEnabled;
-                    }
-                    await ensureModelCatalogLoaded();
-                    if (chatModelSelect) {
-                        const desiredModel = promptData.model || "";
-                        chatModelSelect.value = desiredModel;
-                        if (chatModelSelect.value !== desiredModel) {
-                            chatModelSelect.value = "";
+            if (promptResult.status === "fulfilled" && promptResult.value && promptResult.value.ok) {
+                try {
+                    const promptData = await promptResult.value.json();
+                    if (state.currentSessionId === sessionId) {
+                        if (systemPromptInput) systemPromptInput.value = promptData.prompt || "";
+                        state.currentSessionGpsEnabled = promptData.include_gps || false;
+                        if (gpsSettingInput) {
+                            gpsSettingInput.checked = state.currentSessionGpsEnabled;
                         }
+                        await ensureModelCatalogLoaded();
+                        if (chatModelSelect) {
+                            const desiredModel = promptData.model || "";
+                            chatModelSelect.value = desiredModel;
+                            if (chatModelSelect.value !== desiredModel) {
+                                chatModelSelect.value = "";
+                            }
+                        }
+                        updateHeaderModelIndicator(promptData.model);
                     }
-                    updateHeaderModelIndicator(promptData.model);
-                }
+                } catch (_) {}
             }
 
+            if (historyResult.status !== "fulfilled" || !historyResult.value || !historyResult.value.ok) {
+                return false;
+            }
+
+            const response = historyResult.value;
             const isProcessing = response.headers.get("X-Is-Processing") === "true";
             const history = await response.json();
 
-            if (requestId !== state.selectSessionCounter) return;
-            if (state.currentSessionId !== sessionId) return;
+            if (requestId !== state.selectSessionCounter) return false;
+            if (state.currentSessionId !== sessionId) return false;
+
+            if (state.pendingRecoverySessionId === sessionId) {
+                state.pendingRecoverySessionId = null;
+            }
 
             if (chatContainer) chatContainer.innerHTML = '';
             state.currentSessionHistory = history || [];
@@ -295,18 +333,48 @@ document.addEventListener("DOMContentLoaded", () => {
                 chatView.removeTypingIndicator();
                 stopPollingSession(sessionId);
             }
+            return true;
         } catch (error) {
             console.error("Failed to load history", error);
+            return false;
         }
     };
 
-    const recoverInterruptedChat = async (sessionId, baselineHistoryCount) => {
-        const maxAttempts = state.streamWasHidden ? 3 : 1;
-        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const syncSessionWithRetry = async (sessionId, forceReload = false) => {
+        const delays = [250, 400, 650];
+        for (let i = 0; i <= delays.length; i++) {
+            if (state.currentSessionId !== sessionId) return false;
+            const ok = await selectSession(sessionId, forceReload);
+            if (ok) return true;
+            if (i < delays.length) {
+                await waitForVisibleOrDelay(delays[i]);
+            }
+        }
+        return false;
+    };
+
+    const recoverInterruptedChat = async (sessionId, baselineHistoryCount, expectedUserText = "") => {
+        const backoffs = [250, 400, 600, 800, 1000, 1200, 1500];
+        let attempt = 0;
+
+        while (attempt < (state.streamWasHidden ? 8 : 3)) {
+            if (document.visibilityState === "hidden") {
+                state.streamWasHidden = true;
+                await waitForVisibleOrDelay(0);
+            }
+            if (state.recoveryResetRequested) {
+                state.recoveryResetRequested = false;
+                attempt = 0;
+            }
+            attempt++;
+
             try {
                 const statusRes = await api.getSessionStatus(sessionId);
-                if (!statusRes.ok) {
+                if (statusRes.status === 404) {
                     return false;
+                }
+                if (!statusRes.ok) {
+                    throw new Error(`Status check failed with ${statusRes.status}`);
                 }
                 const statusData = await statusRes.json();
                 if (statusData.is_processing) {
@@ -314,7 +382,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         state.activeSubmittingSessionId = null;
                     }
                     if (state.currentSessionId === sessionId) {
-                        await selectSession(sessionId, true);
+                        await syncSessionWithRetry(sessionId, true);
                     } else {
                         startPollingSession(sessionId);
                     }
@@ -323,15 +391,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 const histRes = await api.getSessionHistory(sessionId);
                 if (!histRes.ok) {
-                    return false;
+                    throw new Error(`History check failed with ${histRes.status}`);
                 }
                 const history = await histRes.json();
-                if (Array.isArray(history) && history.length > baselineHistoryCount) {
+                const lastMsg = Array.isArray(history) && history.length > 0 ? history[history.length - 1] : null;
+                const prevMsg = Array.isArray(history) && history.length > 1 ? history[history.length - 2] : null;
+                const hasServerProgress = Array.isArray(history) && (
+                    history.length > baselineHistoryCount ||
+                    Boolean(expectedUserText && lastMsg && !lastMsg.is_user && prevMsg && prevMsg.is_user && prevMsg.text === expectedUserText)
+                );
+                if (hasServerProgress) {
                     if (state.activeSubmittingSessionId === sessionId) {
                         state.activeSubmittingSessionId = null;
                     }
                     if (state.currentSessionId === sessionId) {
-                        await selectSession(sessionId, true);
+                        await syncSessionWithRetry(sessionId, true);
                     }
                     try {
                         const sessions = await api.getSessions();
@@ -340,13 +414,17 @@ document.addEventListener("DOMContentLoaded", () => {
                     } catch (_) {}
                     return true;
                 }
-                return false;
             } catch (err) {
-                if (attempt < maxAttempts) {
-                    await new Promise(resolve => setTimeout(resolve, 400));
-                } else {
+                const maxAttempts = state.streamWasHidden ? 8 : 3;
+                if (attempt >= maxAttempts && document.visibilityState !== "hidden" && !state.recoveryResetRequested) {
                     console.warn("Could not recover interrupted chat session", sessionId, err);
                 }
+            }
+
+            const maxAttempts = state.streamWasHidden ? 8 : 3;
+            if (attempt < maxAttempts || document.visibilityState === "hidden" || state.recoveryResetRequested) {
+                const delayMs = backoffs[Math.min(attempt - 1, backoffs.length - 1)];
+                await waitForVisibleOrDelay(delayMs);
             }
         }
         return false;
@@ -515,6 +593,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 });
 
                 if (!response.ok) {
+                    if (state.currentSessionHistory.length > baselineHistoryCount) {
+                        state.currentSessionHistory.length = baselineHistoryCount;
+                    }
                     chatView.removeTypingIndicator();
                     let errorMsg = "Fehler beim Senden der Nachricht.";
                     try {
@@ -642,8 +723,16 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
 
             } catch (error) {
-                const recovered = await recoverInterruptedChat(submittedSessionId, baselineHistoryCount);
+                if (state.activeStreamAbortController === streamAbortController) {
+                    state.activeStreamAbortController = null;
+                }
+                state.recoveryResetRequested = false;
+                const recovered = await recoverInterruptedChat(submittedSessionId, baselineHistoryCount, displayMsg);
                 if (!recovered) {
+                    if (state.currentSessionHistory.length > baselineHistoryCount) {
+                        state.currentSessionHistory.length = baselineHistoryCount;
+                    }
+                    state.pendingRecoverySessionId = submittedSessionId;
                     chatView.removeTypingIndicator();
                     if (state.currentSessionId === submittedSessionId) {
                         chatView.appendErrorMessage("Es gab einen Verbindungsfehler. Bitte versuche es später noch einmal.");
@@ -653,8 +742,8 @@ document.addEventListener("DOMContentLoaded", () => {
             } finally {
                 if (state.activeStreamAbortController === streamAbortController) {
                     state.activeStreamAbortController = null;
-                    state.streamWasHidden = false;
                 }
+                state.streamWasHidden = false;
                 if (state.activeSubmittingSessionId === submittedSessionId) {
                     state.activeSubmittingSessionId = null;
                 }
@@ -946,27 +1035,40 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    const handleForegroundWakeup = () => {
+        if (document.visibilityState === "hidden" || !state.currentSessionId) {
+            return;
+        }
+        if (state.streamWasHidden && state.activeStreamAbortController) {
+            state.activeStreamAbortController.abort();
+            notifyRecoveryWake();
+        } else if (state.activeSubmittingSessionId === state.currentSessionId) {
+            state.streamWasHidden = true;
+            notifyRecoveryWake();
+        } else {
+            syncSessionWithRetry(state.currentSessionId, Boolean(state.pendingRecoverySessionId));
+        }
+    };
+
     // Visibility change and network reconnect sync
     document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "hidden") {
-            if (state.activeStreamAbortController) {
+            if (state.activeStreamAbortController || state.activeSubmittingSessionId) {
                 state.streamWasHidden = true;
             }
             return;
         }
-        if (document.visibilityState === "visible" && state.currentSessionId) {
-            if (state.streamWasHidden && state.activeStreamAbortController) {
-                state.activeStreamAbortController.abort();
-            } else if (state.activeSubmittingSessionId !== state.currentSessionId) {
-                selectSession(state.currentSessionId);
-            }
+        handleForegroundWakeup();
+    });
+
+    window.addEventListener("pageshow", (event) => {
+        if (event.persisted || document.visibilityState === "visible") {
+            handleForegroundWakeup();
         }
     });
 
     window.addEventListener("online", () => {
-        if (document.visibilityState === "visible" && state.currentSessionId && state.activeSubmittingSessionId !== state.currentSessionId) {
-            selectSession(state.currentSessionId);
-        }
+        handleForegroundWakeup();
     });
 
     // Initial Auth Check and Error Handling

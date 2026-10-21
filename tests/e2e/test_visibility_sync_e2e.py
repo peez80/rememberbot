@@ -489,3 +489,332 @@ async def test_mid_sse_stream_premature_close_recovers_seamlessly_e2e():
         await browser.close()
 
 
+
+
+@pytest.mark.asyncio
+async def test_smartphone_close_browser_goes_offline_while_hidden_and_delayed_wakeup_recovers_e2e():
+    """Verify real smartphone behavior: closing the browser sets visibilityState='hidden' AND blocks all network sockets
+    (chat, status, history) for >1.2s while hidden, and keeps network unavailable for another 700ms after waking up.
+    No error message may appear; once network wakes up, the completed answer must be displayed."""
+    import asyncio
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context()
+        page = await context.new_page()
+
+        backend_state = {
+            "processing": False,
+            "network_offline": False,
+            "history": []
+        }
+
+        await page.route("**/api/auth/status", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"authenticated": true, "username": "testuser"}'
+        ))
+
+        async def sessions_route(route):
+            if backend_state["network_offline"]:
+                await route.abort("internetdisconnected")
+                return
+            await route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='[{"id": "sess-phone", "title": "Smartphone Chat", "created_at": "2026-01-01T00:00:00Z"}]'
+            )
+        await page.route("**/api/sessions", sessions_route)
+
+        async def settings_route(route):
+            if backend_state["network_offline"]:
+                await route.abort("internetdisconnected")
+                return
+            await route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"prompt": ""}'
+            )
+        await page.route("**/api/sessions/sess-phone/settings", settings_route)
+
+        async def history_route(route):
+            if backend_state["network_offline"]:
+                await route.abort("internetdisconnected")
+                return
+            await route.fulfill(
+                status=200,
+                headers={"X-Is-Processing": "true" if backend_state["processing"] else "false"},
+                content_type="application/json",
+                body=json.dumps(backend_state["history"])
+            )
+        await page.route("**/api/sessions/sess-phone/history", history_route)
+
+        async def status_route(route):
+            if backend_state["network_offline"]:
+                await route.abort("internetdisconnected")
+                return
+            await route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"id": "sess-phone", "is_processing": backend_state["processing"]})
+            )
+        await page.route("**/api/sessions/sess-phone/status", status_route)
+
+        async def chat_route(route):
+            backend_state["processing"] = True
+            backend_state["history"] = [
+                {"text": "Smartphone Hintergrund-Test", "is_user": True, "timestamp": "2026-01-01T00:01:00Z"}
+            ]
+            await asyncio.sleep(0.25)
+            await route.abort("internetdisconnected")
+
+        await page.route("**/api/sessions/sess-phone/chat", chat_route)
+
+        await page.goto(f"http://127.0.0.1:{SERVER_PORT}")
+        await page.evaluate("""() => {
+            const modal = document.getElementById('auth-modal');
+            if (modal) modal.remove();
+        }""")
+
+        await expect(page.locator("#chat-container")).to_be_visible()
+
+        await page.fill("#message-input", "Smartphone Hintergrund-Test")
+        await page.click("#send-btn")
+
+        await page.wait_for_timeout(100)
+
+        # User closes browser on smartphone: page becomes hidden AND OS suspends network sockets for the tab
+        backend_state["network_offline"] = True
+        await page.evaluate("""() => {
+            Object.defineProperty(document, 'visibilityState', {
+                configurable: true,
+                get: function() { return 'hidden'; }
+            });
+            document.dispatchEvent(new Event('visibilitychange'));
+        }""")
+
+        # Stay closed for 1.2s (longer than old 3x400ms=800ms loop) while agy finishes on backend
+        await page.wait_for_timeout(1200)
+        backend_state["history"].append({
+            "text": "Antwort nach Smartphone-Wiederöffnen geladen!",
+            "is_user": False,
+            "timestamp": "2026-01-01T00:01:05Z"
+        })
+        backend_state["processing"] = False
+
+        # User re-opens browser (visible), but smartphone OS takes another 700ms to unsuspend sockets (no 'online' event fires)
+        await page.evaluate("""() => {
+            Object.defineProperty(document, 'visibilityState', {
+                configurable: true,
+                get: function() { return 'visible'; }
+            });
+            document.dispatchEvent(new Event('visibilitychange'));
+        }""")
+
+        # Immediately upon waking up, NO error message may be visible!
+        await expect(page.locator(".error-message")).to_have_count(0)
+
+        await page.wait_for_timeout(700)
+        backend_state["network_offline"] = False
+
+        await expect(page.locator("text='Antwort nach Smartphone-Wiederöffnen geladen!'")).to_be_visible(timeout=4000)
+        await expect(page.locator(".error-message")).to_have_count(0)
+        await expect(page.locator("#typing-indicator")).not_to_be_visible()
+
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_smartphone_abort_during_close_gesture_before_hidden_recovers_e2e():
+    """Verify that if the mobile OS drops the socket during the app-closing swipe gesture BEFORE visibilityState
+    changes to 'hidden' (so streamWasHidden is initially false), it still pauses/retries across wakeup without error."""
+    import asyncio
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context()
+        page = await context.new_page()
+
+        backend_state = {
+            "processing": False,
+            "network_offline": False,
+            "history": []
+        }
+
+        await page.route("**/api/auth/status", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"authenticated": true, "username": "testuser"}'
+        ))
+
+        async def sessions_route(route):
+            if backend_state["network_offline"]:
+                await route.abort("internetdisconnected")
+                return
+            await route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='[{"id": "sess-swipe", "title": "Swipe Chat", "created_at": "2026-01-01T00:00:00Z"}]'
+            )
+        await page.route("**/api/sessions", sessions_route)
+
+        async def settings_route(route):
+            if backend_state["network_offline"]:
+                await route.abort("internetdisconnected")
+                return
+            await route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"prompt": ""}'
+            )
+        await page.route("**/api/sessions/sess-swipe/settings", settings_route)
+
+        async def history_route(route):
+            if backend_state["network_offline"]:
+                await route.abort("internetdisconnected")
+                return
+            await route.fulfill(
+                status=200,
+                headers={"X-Is-Processing": "true" if backend_state["processing"] else "false"},
+                content_type="application/json",
+                body=json.dumps(backend_state["history"])
+            )
+        await page.route("**/api/sessions/sess-swipe/history", history_route)
+
+        async def status_route(route):
+            if backend_state["network_offline"]:
+                await route.abort("internetdisconnected")
+                return
+            await route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"id": "sess-swipe", "is_processing": backend_state["processing"]})
+            )
+        await page.route("**/api/sessions/sess-swipe/status", status_route)
+
+        async def chat_route(route):
+            backend_state["processing"] = False
+            backend_state["history"] = [
+                {"text": "Wischgeste Nachricht", "is_user": True, "timestamp": "2026-01-01T00:01:00Z"},
+                {"text": "Antwort trotz Abbruch vor hidden!", "is_user": False, "timestamp": "2026-01-01T00:01:02Z"}
+            ]
+            # Socket drops while visibilityState is still 'visible', and network is momentarily unavailable
+            backend_state["network_offline"] = True
+            await route.abort("internetdisconnected")
+
+        await page.route("**/api/sessions/sess-swipe/chat", chat_route)
+
+        await page.goto(f"http://127.0.0.1:{SERVER_PORT}")
+        await page.evaluate("""() => {
+            const modal = document.getElementById('auth-modal');
+            if (modal) modal.remove();
+        }""")
+
+        await expect(page.locator("#chat-container")).to_be_visible()
+
+        await page.fill("#message-input", "Wischgeste Nachricht")
+        await page.click("#send-btn")
+
+        # 50ms after socket broke, visibilityState becomes 'hidden'
+        await page.wait_for_timeout(50)
+        await page.evaluate("""() => {
+            Object.defineProperty(document, 'visibilityState', {
+                configurable: true,
+                get: function() { return 'hidden'; }
+            });
+            document.dispatchEvent(new Event('visibilitychange'));
+        }""")
+
+        await page.wait_for_timeout(500)
+
+        # User re-opens browser and network comes back after 300ms
+        await page.evaluate("""() => {
+            Object.defineProperty(document, 'visibilityState', {
+                configurable: true,
+                get: function() { return 'visible'; }
+            });
+            document.dispatchEvent(new Event('visibilitychange'));
+        }""")
+        await page.wait_for_timeout(300)
+        backend_state["network_offline"] = False
+
+        await expect(page.locator("text='Antwort trotz Abbruch vor hidden!'")).to_be_visible(timeout=4000)
+        await expect(page.locator(".error-message")).to_have_count(0)
+
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_visibility_wakeup_retries_select_session_when_first_fetch_fails_e2e():
+    """Verify that if an error was shown and visibilitychange -> visible fires while the smartphone network
+    still fails the first selectSession fetch at t=0ms, syncSessionWithRetry automatically retries and loads the answer."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+
+        state_tracker = {
+            "history_calls": 0,
+            "fail_next_history": False
+        }
+
+        await page.route("**/api/auth/status", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"authenticated": true, "username": "testuser"}'
+        ))
+        await page.route("**/api/sessions", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='[{"id": "sess-wake-retry", "title": "Wake Retry", "created_at": "2026-01-01T00:00:00Z"}]'
+        ))
+        await page.route("**/api/sessions/sess-wake-retry/settings", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"prompt": ""}'
+        ))
+
+        async def history_route(route):
+            state_tracker["history_calls"] += 1
+            if state_tracker["history_calls"] == 1:
+                await route.fulfill(status=200, content_type="application/json", body="[]")
+            elif state_tracker["fail_next_history"]:
+                # First fetch at t=0ms of visibilitychange fails due to mobile socket resume delay
+                state_tracker["fail_next_history"] = False
+                await route.abort("internetdisconnected")
+            else:
+                await route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps([
+                        {"text": "Hallo", "is_user": True, "timestamp": "2026-01-01T00:01:00Z"},
+                        {"text": "Antwort nach Wakeup-Retry!", "is_user": False, "timestamp": "2026-01-01T00:01:05Z"}
+                    ])
+                )
+
+        await page.route("**/api/sessions/sess-wake-retry/history", history_route)
+        await page.route("**/api/sessions/sess-wake-retry/chat", lambda route: route.abort("failed"))
+
+        await page.goto(f"http://127.0.0.1:{SERVER_PORT}")
+        await page.evaluate("""() => {
+            const modal = document.getElementById('auth-modal');
+            if (modal) modal.remove();
+        }""")
+
+        await expect(page.locator("#chat-container")).to_be_visible()
+        await page.fill("#message-input", "Hallo")
+        await page.click("#send-btn")
+
+        await expect(page.locator(".error-message")).to_be_visible()
+
+        # Now user returns to browser, but first history fetch fails at t=0ms
+        state_tracker["fail_next_history"] = True
+        await page.evaluate("""() => {
+            Object.defineProperty(document, 'visibilityState', {
+                configurable: true,
+                get: function() { return 'visible'; }
+            });
+            document.dispatchEvent(new Event('visibilitychange'));
+        }""")
+
+        await expect(page.locator("text='Antwort nach Wakeup-Retry!'")).to_be_visible(timeout=3000)
+        await expect(page.locator(".error-message")).to_have_count(0)
+
+        await browser.close()

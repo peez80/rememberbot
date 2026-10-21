@@ -96,3 +96,60 @@ async def test_stream_chat_generator_unregisters_session_on_prepare_error():
 
     assert supervisor.is_session_active(username, session_id) is False
 
+
+@pytest.mark.asyncio
+async def test_stream_chat_continues_in_background_if_disconnected_during_prepare():
+    """Verify that if the client disconnects (CancelledError) while _prepare_chat_turn is still running,
+    the turn preparation is shielded, background_stream_consumer completes the AI response, and unregisters the session."""
+    import asyncio
+    from unittest.mock import AsyncMock
+    from app.core.tasks import supervisor
+    from app.services.chat_service import chat_service
+
+    username = "testuser"
+    session_id = "sess-prep-cancel"
+
+    async def slow_prepare(*args, **kwargs):
+        await asyncio.sleep(0.25)
+        return {
+            "history": [],
+            "is_first_message": False,
+            "system_prompt": "sys",
+            "cwd": "/tmp",
+            "conversation_id": "conv-1",
+            "stored_conv_id": "conv-1",
+            "model": None,
+            "thinking_effort": None,
+        }
+
+    async def mock_stream(*args, **kwargs):
+        yield {"type": "delta", "text": "Hintergrund "}
+        yield {"type": "done", "reply": "Hintergrund Antwort", "context_truncated": False}
+
+    mock_finalize = AsyncMock(return_value={"reply": "Hintergrund Antwort", "timestamp": "2026-01-01T00:00:05Z"})
+
+    with patch.object(chat_service, "_prepare_chat_turn", side_effect=slow_prepare), \
+         patch.object(chat_service._agy, "stream_message", side_effect=mock_stream), \
+         patch.object(chat_service, "_finalize_chat_turn", mock_finalize):
+
+        gen = chat_service.stream_chat_generator(
+            username=username,
+            session_id=session_id,
+            message="Test während Prepare"
+        )
+
+        # Start iterating generator, then cancel after 50ms while slow_prepare (250ms) is still running
+        next_task = asyncio.create_task(gen.__anext__())
+        await asyncio.sleep(0.05)
+        assert supervisor.is_session_active(username, session_id) is True
+        next_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await next_task
+
+        # Wait for background consumer to finish slow_prepare + mock_stream + mock_finalize
+        await asyncio.sleep(0.4)
+
+        mock_finalize.assert_awaited_once()
+        assert supervisor.is_session_active(username, session_id) is False
+
+

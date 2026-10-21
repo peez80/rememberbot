@@ -52,6 +52,20 @@ Diese Datei enthält projektspezifische Verhaltensregeln und Standard-Anweisunge
 - **Logging-Verifikation:** Teste Fehlerbehandlungs-Routen und Ausnahme-Pfade mit dem Pytest-Fixture `caplog`, um sicherzustellen, dass die definierten Log-Einträge im Fehlerfall zuverlässig generiert werden.
 - Test-Framework ist `pytest`. Die Test-Suite ist in 3 Ebenen unterteilt (`unit/`, `integration/`, `e2e/`), die auch über Marker (`pytest -m unit`, `-m integration`, `-m e2e`) angesprochen werden können.
 
+## Validierung des Implementierungsplans
+Verification steps, all mandatory:
+
+1. Components fit together: all files, scripts, docs and callers affected by the change are listed
+   (use grep to find hard-coded references to what is being changed).
+2. Completeness: every component is fully planned, no "TBD" or implicit steps.
+3. Syntax and semantics: commands, config keys and file formats are correct. Run available
+   checks (e.g. `kubectl kustomize`, `bash -n`) when possible.
+4. External facts: check against official documentation or the internet. Comparing with
+   existing files in the repo does not count as verification.
+
+Every plan must end with a `## Verification` section stating, per step, what was checked and how,
+and which assumptions could not be verified (and why). A plan without this section is incomplete.
+
 ## 4. Allgemeine Richtlinien
 - Bewahre die Integrität bestehender Kommentare und Docstrings, es sei denn, der Code ändert sich grundlegend.
 - Füge für neue komplexe Funktionen oder Klassen aussagekräftige Docstrings hinzu.

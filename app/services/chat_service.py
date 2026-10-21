@@ -261,8 +261,8 @@ class ChatService:
         display_msg: str = None
     ) -> AsyncGenerator[str, None]:
         supervisor.register_session(username, session_id)
-        try:
-            prep = await self._prepare_chat_turn(
+        prep_task = supervisor.create_task(
+            self._prepare_chat_turn(
                 username=username,
                 session_id=session_id,
                 message=message,
@@ -275,15 +275,19 @@ class ChatService:
                 attachments=attachments,
                 display_msg=display_msg
             )
-        except BaseException:
-            supervisor.unregister_session(username, session_id)
-            raise
+        )
 
         queue = asyncio.Queue()
 
         async def background_stream_consumer():
             full_raw_reply = ""
             done_saved = False
+            try:
+                prep = await prep_task
+            except BaseException:
+                await queue.put(None)
+                supervisor.unregister_session(username, session_id)
+                return
             current_conv_id = prep["conversation_id"]
             try:
                 async for event in self._agy.stream_message(
@@ -351,10 +355,17 @@ class ChatService:
                 supervisor.unregister_session(username, session_id)
 
         # Run consumer in supervisor background task shielded against client disconnect
-        supervisor.register_session(username, session_id)
         consumer_task = supervisor.create_task(background_stream_consumer())
 
         try:
+            try:
+                await asyncio.shield(prep_task)
+            except asyncio.CancelledError:
+                raise
+            except BaseException:
+                supervisor.unregister_session(username, session_id)
+                raise
+
             while True:
                 item = await queue.get()
                 if item is None:
@@ -369,4 +380,3 @@ class ChatService:
 
 # Global instance
 chat_service = ChatService()
-
