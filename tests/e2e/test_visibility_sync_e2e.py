@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import pytest
@@ -816,5 +817,173 @@ async def test_visibility_wakeup_retries_select_session_when_first_fetch_fails_e
 
         await expect(page.locator("text='Antwort nach Wakeup-Retry!'")).to_be_visible(timeout=3000)
         await expect(page.locator(".error-message")).to_have_count(0)
+
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_wakeup_overlapping_events_do_not_cancel_in_flight_history_fetch_e2e():
+    """Verify that overlapping wakeup events (visibilitychange, pageshow, online) do not ping-pong cancel
+    an in-flight selectSession/history fetch, and history renders quickly without blocking on slow settings."""
+    import time
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+
+        await page.route("**/api/auth/status", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"authenticated": true, "username": "testuser"}'
+        ))
+        await page.route("**/api/sessions", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='[{"id": "sess-dedup", "title": "Dedup Test", "created_at": "2026-01-01T00:00:00Z"}]'
+        ))
+
+        # Settings is artificially slow (1.2s)
+        async def slow_settings(route):
+            await asyncio.sleep(1.2)
+            await route.fulfill(status=200, content_type="application/json", body='{"prompt": ""}')
+        await page.route("**/api/sessions/sess-dedup/settings", slow_settings)
+
+        history_calls = 0
+        async def history_route(route):
+            nonlocal history_calls
+            history_calls += 1
+            if history_calls == 1:
+                await route.fulfill(status=200, content_type="application/json", body="[]")
+            else:
+                await asyncio.sleep(0.12)
+                await route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    headers={"X-Is-Processing": "false"},
+                    body=json.dumps([
+                        {"text": "Hallo", "is_user": True, "timestamp": "2026-01-01T00:01:00Z"},
+                        {"text": "Antwort ohne Wakeup-Ping-Pong!", "is_user": False, "timestamp": "2026-01-01T00:01:05Z"}
+                    ])
+                )
+        await page.route("**/api/sessions/sess-dedup/history", history_route)
+        await page.route("**/api/sessions/sess-dedup/chat", lambda route: route.abort("failed"))
+
+        await page.goto(f"http://127.0.0.1:{SERVER_PORT}")
+        await page.evaluate("""() => {
+            const modal = document.getElementById('auth-modal');
+            if (modal) modal.remove();
+        }""")
+
+        await expect(page.locator("#chat-container")).to_be_visible()
+        await page.fill("#message-input", "Hallo")
+        await page.click("#send-btn")
+
+        await expect(page.locator(".error-message")).to_be_visible()
+
+        t_start = time.perf_counter()
+        # Fire multiple wakeup events in quick succession (t=0ms, t=40ms, t=80ms)
+        await page.evaluate("""() => {
+            Object.defineProperty(document, 'visibilityState', {
+                configurable: true,
+                get: function() { return 'visible'; }
+            });
+            document.dispatchEvent(new Event('visibilitychange'));
+            setTimeout(() => window.dispatchEvent(new Event('pageshow')), 40);
+            setTimeout(() => window.dispatchEvent(new Event('online')), 80);
+        }""")
+
+        # Answer must render in < 800ms, not blocked by the 1.2s settings fetch or cancelled by event ping-pong
+        await expect(page.locator("text='Antwort ohne Wakeup-Ping-Pong!'")).to_be_visible(timeout=800)
+        t_elapsed = time.perf_counter() - t_start
+        assert t_elapsed < 0.8, f"History took {t_elapsed:.2f}s to render (too slow!)"
+        await expect(page.locator(".error-message")).to_have_count(0)
+
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_recover_interrupted_chat_renders_history_directly_without_duplicate_history_fetch_e2e():
+    """Verify that recoverInterruptedChat renders history directly upon loading it,
+    rather than downloading /history a second time via selectSession."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+
+        recovery_history_fetches = 0
+        server_ready = {"ready": False}
+
+        await page.route("**/api/auth/status", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"authenticated": true, "username": "testuser"}'
+        ))
+        await page.route("**/api/sessions", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='[{"id": "sess-direct-hist", "title": "Direct Hist", "created_at": "2026-01-01T00:00:00Z"}]'
+        ))
+        await page.route("**/api/sessions/sess-direct-hist/settings", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"prompt": ""}'
+        ))
+        await page.route("**/api/sessions/sess-direct-hist/status", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({"id": "sess-direct-hist", "is_processing": not server_ready["ready"]})
+        ))
+
+        async def history_route(route):
+            nonlocal recovery_history_fetches
+            if not server_ready["ready"]:
+                await route.fulfill(status=200, content_type="application/json", body="[]")
+            else:
+                recovery_history_fetches += 1
+                await route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    headers={"X-Is-Processing": "false"},
+                    body=json.dumps([
+                        {"text": "Hallo", "is_user": True, "timestamp": "2026-01-01T00:01:00Z"},
+                        {"text": "Direkt gerenderte Antwort!", "is_user": False, "timestamp": "2026-01-01T00:01:05Z"}
+                    ])
+                )
+        await page.route("**/api/sessions/sess-direct-hist/history", history_route)
+        await page.route("**/api/sessions/sess-direct-hist/chat", lambda route: route.abort("failed"))
+
+        await page.goto(f"http://127.0.0.1:{SERVER_PORT}")
+        await page.evaluate("""() => {
+            const modal = document.getElementById('auth-modal');
+            if (modal) modal.remove();
+        }""")
+
+        await expect(page.locator("#chat-container")).to_be_visible()
+
+        # Mark browser as hidden right as chat is submitted
+        await page.evaluate("""() => {
+            Object.defineProperty(document, 'visibilityState', {
+                configurable: true,
+                get: function() { return 'hidden'; }
+            });
+        }""")
+
+        await page.fill("#message-input", "Hallo")
+        await page.click("#send-btn")
+
+        await asyncio.sleep(0.3)
+        # Server is now ready with the answer
+        server_ready["ready"] = True
+
+        # Now browser wakes up
+        await page.evaluate("""() => {
+            Object.defineProperty(document, 'visibilityState', {
+                configurable: true,
+                get: function() { return 'visible'; }
+            });
+            document.dispatchEvent(new Event('visibilitychange'));
+        }""")
+
+        await expect(page.locator("text='Direkt gerenderte Antwort!'")).to_be_visible(timeout=3000)
+        # /history should have been fetched only 1 time during recovery, not 2 times!
+        assert recovery_history_fetches == 1, f"Expected 1 history fetch during recovery, but got {recovery_history_fetches}"
 
         await browser.close()

@@ -82,3 +82,28 @@ async def test_agy_service_generate_chat_icon_failure_logs_stderr(agy_service, t
     assert "Fatal CLI error" in caplog.text
 
 
+
+@pytest.mark.asyncio
+async def test_generate_chat_icon_deduplicates_concurrent_calls_for_same_path(agy_service, tmp_path):
+    import asyncio
+    import os
+
+    target_path = str(tmp_path / "icon.svg")
+    mock_process = AsyncMock()
+
+    async def slow_communicate():
+        await asyncio.sleep(0.1)
+        return (b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40"/></svg>', b'')
+
+    mock_process.communicate.side_effect = slow_communicate
+    mock_process.returncode = 0
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_process) as mock_exec:
+        await asyncio.gather(
+            agy_service.generate_chat_icon("Meeting Notes", target_path),
+            agy_service.generate_chat_icon("Meeting Notes", target_path),
+            agy_service.generate_chat_icon("Meeting Notes", target_path)
+        )
+
+    assert mock_exec.call_count == 1
+    assert os.path.exists(target_path)

@@ -16,6 +16,8 @@ export const state = {
     currentRenderStartIndex: 0,
     isPrependingMessages: false,
     selectSessionCounter: 0,
+    activeSelectSessionPromise: null,
+    activeSelectSessionId: null,
     lastSessions: [],
     activePollTimers: new Map(),
     MESSAGE_BATCH_SIZE: 20,

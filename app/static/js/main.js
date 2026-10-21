@@ -189,6 +189,17 @@ document.addEventListener("DOMContentLoaded", () => {
         timer = setTimeout(wake, delayMs);
     });
 
+    const fetchWithTimeout = async (requestFn, timeoutMs = 1200) => {
+        const controller = new AbortController();
+        let timer = null;
+        try {
+            timer = setTimeout(() => controller.abort(), timeoutMs);
+            return await requestFn(controller.signal);
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
+    };
+
     // Background session polling
     const stopPollingSession = (sessionId) => {
         if (state.activePollTimers.has(sessionId)) {
@@ -200,7 +211,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const startPollingSession = (sessionId) => {
         if (state.activePollTimers.has(sessionId)) return;
 
-        const timerId = setInterval(async () => {
+        const checkStatus = async () => {
             if (document.visibilityState === "hidden") return;
             try {
                 const res = await api.getSessionStatus(sessionId);
@@ -223,9 +234,44 @@ document.addEventListener("DOMContentLoaded", () => {
             } catch (err) {
                 console.error("Polling error for session", sessionId, err);
             }
-        }, 1000);
+        };
 
+        const timerId = setInterval(checkStatus, 500);
         state.activePollTimers.set(sessionId, timerId);
+    };
+
+    const applySessionHistoryToView = (sessionId, history, isProcessing) => {
+        if (state.currentSessionId !== sessionId) return false;
+        if (state.pendingRecoverySessionId === sessionId) {
+            state.pendingRecoverySessionId = null;
+        }
+
+        if (chatContainer) chatContainer.innerHTML = '';
+        state.currentSessionHistory = history || [];
+        if (state.currentSessionHistory.length > 0) {
+            state.currentRenderStartIndex = Math.max(0, state.currentSessionHistory.length - state.MESSAGE_BATCH_SIZE);
+            const initialBatch = state.currentSessionHistory.slice(state.currentRenderStartIndex);
+            initialBatch.forEach(msg => {
+                const msgFiles = msg.files || [];
+                const msgImages = (msg.images || msg.image_urls || []).length > 0 
+                    ? (msg.images || msg.image_urls) 
+                    : msgFiles.filter(f => f.is_image);
+                chatView.appendMessage(msg.text, msg.is_user, msgImages, msg.timestamp, true, false, true, msgFiles);
+            });
+            chatView.scrollToBottom(false);
+        } else if (!isProcessing && state.activeSubmittingSessionId !== sessionId) {
+            state.currentRenderStartIndex = 0;
+            chatView.showInitialGreeting();
+        }
+
+        if (isProcessing || state.activeSubmittingSessionId === sessionId) {
+            chatView.showTypingIndicator();
+            startPollingSession(sessionId);
+        } else {
+            chatView.removeTypingIndicator();
+            stopPollingSession(sessionId);
+        }
+        return true;
     };
 
     // Select session
@@ -234,6 +280,11 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!forceReload && !isSwitchingSession && state.activeSubmittingSessionId === sessionId) {
             return false;
         }
+
+        if (!forceReload && !isSwitchingSession && state.activeSelectSessionPromise && state.activeSelectSessionId === sessionId && state.currentSessionId === sessionId) {
+            return state.activeSelectSessionPromise;
+        }
+
         const requestId = ++state.selectSessionCounter;
         setCurrentSessionId(sessionId);
         if (contextWarning) contextWarning.style.display = "none";
@@ -262,86 +313,67 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         }
 
-        try {
-            const [promptResult, historyResult] = await Promise.allSettled([
-                api.getSessionSettings(sessionId),
-                api.getSessionHistory(sessionId)
-            ]);
-
-            if (requestId !== state.selectSessionCounter) return false;
-            if (state.currentSessionId !== sessionId) return false;
-
-            if (promptResult.status === "fulfilled" && promptResult.value && promptResult.value.ok) {
-                try {
-                    const promptData = await promptResult.value.json();
-                    if (state.currentSessionId === sessionId) {
-                        if (systemPromptInput) systemPromptInput.value = promptData.prompt || "";
-                        state.currentSessionGpsEnabled = promptData.include_gps || false;
-                        if (gpsSettingInput) {
-                            gpsSettingInput.checked = state.currentSessionGpsEnabled;
-                        }
-                        await ensureModelCatalogLoaded();
-                        if (chatModelSelect) {
-                            const desiredModel = promptData.model || "";
-                            chatModelSelect.value = desiredModel;
-                            if (chatModelSelect.value !== desiredModel) {
-                                chatModelSelect.value = "";
+        const executeSelect = async () => {
+            try {
+                // Fetch settings in parallel without blocking history rendering
+                api.getSessionSettings(sessionId).then(async (promptRes) => {
+                    if (requestId !== state.selectSessionCounter || state.currentSessionId !== sessionId) return;
+                    if (promptRes && promptRes.ok) {
+                        try {
+                            const promptData = await promptRes.json();
+                            if (state.currentSessionId === sessionId) {
+                                if (systemPromptInput) systemPromptInput.value = promptData.prompt || "";
+                                state.currentSessionGpsEnabled = promptData.include_gps || false;
+                                if (gpsSettingInput) {
+                                    gpsSettingInput.checked = state.currentSessionGpsEnabled;
+                                }
+                                await ensureModelCatalogLoaded();
+                                if (chatModelSelect) {
+                                    const desiredModel = promptData.model || "";
+                                    chatModelSelect.value = desiredModel;
+                                    if (chatModelSelect.value !== desiredModel) {
+                                        chatModelSelect.value = "";
+                                    }
+                                }
+                                updateHeaderModelIndicator(promptData.model);
                             }
-                        }
-                        updateHeaderModelIndicator(promptData.model);
+                        } catch (_) {}
                     }
-                } catch (_) {}
-            }
+                }).catch(() => {});
 
-            if (historyResult.status !== "fulfilled" || !historyResult.value || !historyResult.value.ok) {
+                const historyRes = await api.getSessionHistory(sessionId);
+
+                if (requestId !== state.selectSessionCounter) return false;
+                if (state.currentSessionId !== sessionId) return false;
+                if (!historyRes || !historyRes.ok) return false;
+
+                const isProcessing = historyRes.headers.get("X-Is-Processing") === "true";
+                const history = await historyRes.json();
+
+                if (requestId !== state.selectSessionCounter) return false;
+                if (state.currentSessionId !== sessionId) return false;
+
+                applySessionHistoryToView(sessionId, history, isProcessing);
+                return true;
+            } catch (error) {
+                console.error("Failed to load history", error);
                 return false;
+            } finally {
+                if (state.activeSelectSessionId === sessionId) {
+                    state.activeSelectSessionPromise = null;
+                    state.activeSelectSessionId = null;
+                }
             }
+        };
 
-            const response = historyResult.value;
-            const isProcessing = response.headers.get("X-Is-Processing") === "true";
-            const history = await response.json();
-
-            if (requestId !== state.selectSessionCounter) return false;
-            if (state.currentSessionId !== sessionId) return false;
-
-            if (state.pendingRecoverySessionId === sessionId) {
-                state.pendingRecoverySessionId = null;
-            }
-
-            if (chatContainer) chatContainer.innerHTML = '';
-            state.currentSessionHistory = history || [];
-            if (state.currentSessionHistory.length > 0) {
-                state.currentRenderStartIndex = Math.max(0, state.currentSessionHistory.length - state.MESSAGE_BATCH_SIZE);
-                const initialBatch = state.currentSessionHistory.slice(state.currentRenderStartIndex);
-                initialBatch.forEach(msg => {
-                    const msgFiles = msg.files || [];
-                    const msgImages = (msg.images || msg.image_urls || []).length > 0 
-                        ? (msg.images || msg.image_urls) 
-                        : msgFiles.filter(f => f.is_image);
-                    chatView.appendMessage(msg.text, msg.is_user, msgImages, msg.timestamp, true, false, true, msgFiles);
-                });
-                chatView.scrollToBottom(false);
-            } else if (!isProcessing && state.activeSubmittingSessionId !== sessionId) {
-                state.currentRenderStartIndex = 0;
-                chatView.showInitialGreeting();
-            }
-
-            if (isProcessing || state.activeSubmittingSessionId === sessionId) {
-                chatView.showTypingIndicator();
-                startPollingSession(sessionId);
-            } else {
-                chatView.removeTypingIndicator();
-                stopPollingSession(sessionId);
-            }
-            return true;
-        } catch (error) {
-            console.error("Failed to load history", error);
-            return false;
-        }
+        const selectPromise = executeSelect();
+        state.activeSelectSessionPromise = selectPromise;
+        state.activeSelectSessionId = sessionId;
+        return selectPromise;
     };
 
     const syncSessionWithRetry = async (sessionId, forceReload = false) => {
-        const delays = [250, 400, 650];
+        const delays = [80, 180, 350, 600];
         for (let i = 0; i <= delays.length; i++) {
             if (state.currentSessionId !== sessionId) return false;
             const ok = await selectSession(sessionId, forceReload);
@@ -354,7 +386,7 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     const recoverInterruptedChat = async (sessionId, baselineHistoryCount, expectedUserText = "") => {
-        const backoffs = [250, 400, 600, 800, 1000, 1200, 1500];
+        const backoffs = [80, 180, 350, 600, 900, 1200, 1500];
         let attempt = 0;
 
         while (attempt < (state.streamWasHidden ? 8 : 3)) {
@@ -369,7 +401,7 @@ document.addEventListener("DOMContentLoaded", () => {
             attempt++;
 
             try {
-                const statusRes = await api.getSessionStatus(sessionId);
+                const statusRes = await fetchWithTimeout((sig) => api.getSessionStatus(sessionId, { signal: sig }));
                 if (statusRes.status === 404) {
                     return false;
                 }
@@ -389,10 +421,11 @@ document.addEventListener("DOMContentLoaded", () => {
                     return true;
                 }
 
-                const histRes = await api.getSessionHistory(sessionId);
+                const histRes = await fetchWithTimeout((sig) => api.getSessionHistory(sessionId, { signal: sig }));
                 if (!histRes.ok) {
                     throw new Error(`History check failed with ${histRes.status}`);
                 }
+                const isProcessing = histRes.headers.get("X-Is-Processing") === "true";
                 const history = await histRes.json();
                 const lastMsg = Array.isArray(history) && history.length > 0 ? history[history.length - 1] : null;
                 const prevMsg = Array.isArray(history) && history.length > 1 ? history[history.length - 2] : null;
@@ -405,7 +438,8 @@ document.addEventListener("DOMContentLoaded", () => {
                         state.activeSubmittingSessionId = null;
                     }
                     if (state.currentSessionId === sessionId) {
-                        await syncSessionWithRetry(sessionId, true);
+                        applySessionHistoryToView(sessionId, history, isProcessing);
+                        api.getSessionSettings(sessionId).catch(() => {});
                     }
                     try {
                         const sessions = await api.getSessions();
@@ -1050,19 +1084,32 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     };
 
+    const markStreamHidden = () => {
+        if (state.activeStreamAbortController || state.activeSubmittingSessionId) {
+            state.streamWasHidden = true;
+        }
+    };
+
     // Visibility change and network reconnect sync
     document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "hidden") {
-            if (state.activeStreamAbortController || state.activeSubmittingSessionId) {
-                state.streamWasHidden = true;
-            }
+            markStreamHidden();
             return;
         }
         handleForegroundWakeup();
     });
 
+    window.addEventListener("pagehide", markStreamHidden);
+    window.addEventListener("blur", markStreamHidden);
+
     window.addEventListener("pageshow", (event) => {
         if (event.persisted || document.visibilityState === "visible") {
+            handleForegroundWakeup();
+        }
+    });
+
+    window.addEventListener("focus", () => {
+        if (document.visibilityState === "visible") {
             handleForegroundWakeup();
         }
     });

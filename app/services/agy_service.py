@@ -28,6 +28,7 @@ class AGYService:
         self.executable_path = executable_path
         self._cached_model_catalog: Optional[Dict[str, Any]] = None
         self._catalog_lock = asyncio.Lock()
+        self._active_icon_paths: set[str] = set()
 
     async def get_model_catalog(self, force_refresh: bool = False) -> Dict[str, Any]:
         """
@@ -412,6 +413,22 @@ class AGYService:
                     logger.warning(f"Failed to remove temp context file {history_file_path}: {e}")
 
     async def generate_chat_icon(
+        self,
+        title: str,
+        output_path: str,
+        user_context: Optional[str] = None,
+        ai_context: Optional[str] = None
+    ):
+        if output_path in self._active_icon_paths or os.path.exists(output_path):
+            logger.debug(f"Icon generation already in progress or completed for: {output_path}")
+            return
+        self._active_icon_paths.add(output_path)
+        try:
+            return await self._execute_generate_chat_icon(title, output_path, user_context, ai_context)
+        finally:
+            self._active_icon_paths.discard(output_path)
+
+    async def _execute_generate_chat_icon(
         self,
         title: str,
         output_path: str,

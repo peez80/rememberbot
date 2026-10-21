@@ -68,12 +68,12 @@ export const getModelsCatalog = async () => {
     return apiFetch(`/api/sessions/models/catalog`);
 };
 
-export const getSessionHistory = async (sessionId) => {
-    return apiFetch(`/api/sessions/${sessionId}/history`);
+export const getSessionHistory = async (sessionId, options = {}) => {
+    return apiFetch(`/api/sessions/${sessionId}/history`, { cache: "no-store", ...options });
 };
 
-export const getSessionStatus = async (sessionId) => {
-    return apiFetch(`/api/sessions/${sessionId}/status`, { skipAuthHandler: true });
+export const getSessionStatus = async (sessionId, options = {}) => {
+    return apiFetch(`/api/sessions/${sessionId}/status`, { cache: "no-store", skipAuthHandler: true, ...options });
 };
 
 export const updateSessionSettings = async (sessionId, { prompt, include_gps, model, thinking_effort }) => {
