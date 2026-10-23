@@ -57,9 +57,16 @@
                 </button>
             </header>
 
-            <main class="chat-container" id="chat-container">
-                <!-- Chat messages will be injected here -->
-            </main>
+            <div class="chat-main-area">
+                <main class="chat-container" id="chat-container">
+                    <!-- Chat messages will be injected here -->
+                </main>
+
+                <div id="chat-loading-overlay" class="chat-loading-overlay" style="display: none;" aria-live="polite" aria-busy="true">
+                    <div class="chat-loading-spinner"></div>
+                    <div class="chat-loading-text">Chat wird geladen...</div>
+                </div>
+            </div>
 
             <button id="scroll-to-bottom-btn" class="scroll-to-bottom-btn" title="Nach unten scrollen" aria-label="Nach unten scrollen">
                 <i class="ph-bold ph-arrow-down"></i>

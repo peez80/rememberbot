@@ -396,3 +396,21 @@ export const removeStreamingMessage = (controller) => {
         controller.aiMsgDiv.remove();
     }
 };
+
+export const getChatLoadingOverlay = () => document.getElementById("chat-loading-overlay");
+
+export const showChatLoading = () => {
+    const overlay = getChatLoadingOverlay();
+    if (overlay) {
+        overlay.classList.add("visible");
+        overlay.style.display = "flex";
+    }
+};
+
+export const hideChatLoading = () => {
+    const overlay = getChatLoadingOverlay();
+    if (overlay) {
+        overlay.classList.remove("visible");
+        overlay.style.display = "none";
+    }
+};

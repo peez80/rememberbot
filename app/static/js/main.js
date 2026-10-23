@@ -313,6 +313,11 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         }
 
+        const shouldShowLoading = isSwitchingSession || !chatContainer || chatContainer.children.length === 0;
+        if (shouldShowLoading) {
+            chatView.showChatLoading();
+        }
+
         const executeSelect = async () => {
             try {
                 // Fetch settings in parallel without blocking history rendering
@@ -345,7 +350,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 if (requestId !== state.selectSessionCounter) return false;
                 if (state.currentSessionId !== sessionId) return false;
-                if (!historyRes || !historyRes.ok) return false;
+                if (!historyRes || !historyRes.ok) {
+                    if (requestId === state.selectSessionCounter) {
+                        chatView.hideChatLoading();
+                        chatView.appendErrorMessage("Fehler beim Laden des Chatverlaufs.");
+                    }
+                    return false;
+                }
 
                 const isProcessing = historyRes.headers.get("X-Is-Processing") === "true";
                 const history = await historyRes.json();
@@ -357,11 +368,18 @@ document.addEventListener("DOMContentLoaded", () => {
                 return true;
             } catch (error) {
                 console.error("Failed to load history", error);
+                if (requestId === state.selectSessionCounter) {
+                    chatView.hideChatLoading();
+                    chatView.appendErrorMessage("Fehler beim Laden des Chatverlaufs.");
+                }
                 return false;
             } finally {
                 if (state.activeSelectSessionId === sessionId) {
                     state.activeSelectSessionPromise = null;
                     state.activeSelectSessionId = null;
+                }
+                if (requestId === state.selectSessionCounter) {
+                    chatView.hideChatLoading();
                 }
             }
         };
@@ -533,6 +551,7 @@ document.addEventListener("DOMContentLoaded", () => {
             ++state.selectSessionCounter;
 
             if (contextWarning) contextWarning.style.display = "none";
+            chatView.hideChatLoading();
             
             const filesToUpload = [...state.selectedFiles];
             const localImages = [];
