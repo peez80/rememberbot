@@ -20,6 +20,7 @@ export const state = {
     activeSelectSessionId: null,
     lastSessions: [],
     activePollTimers: new Map(),
+    activeIconPollTimers: new Map(),
     MESSAGE_BATCH_SIZE: 20,
     authConfig: null
 };

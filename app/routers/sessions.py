@@ -67,7 +67,15 @@ async def get_session_status_endpoint(session_id: str, username: str = Depends(g
         raise HTTPException(status_code=404, detail="Session not found")
 
     is_processing = supervisor.is_session_active(username, session_id)
-    return {"id": session_id, "is_processing": is_processing}
+    target_icon_path = storage_service.get_session_icon_target_path(username, session_id)
+    is_generating_icon = agy_client.is_generating_icon(target_icon_path)
+    has_icon = storage_service.get_session_icon_path(username, session_id) is not None
+    return {
+        "id": session_id,
+        "is_processing": is_processing,
+        "is_generating_icon": is_generating_icon,
+        "has_icon": has_icon,
+    }
 
 
 @router.get("/{session_id}/history", response_model=List[ChatMessage])
@@ -239,7 +247,8 @@ async def update_title_endpoint(session_id: str, req: SessionTitleRequest, usern
         req.title,
         target_path,
         user_context=user_ctx,
-        ai_context=ai_ctx
+        ai_context=ai_ctx,
+        force=True
     ))
     return {"success": True}
 

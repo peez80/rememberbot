@@ -208,6 +208,84 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     };
 
+    const updateHeaderSessionInfo = (sessionId) => {
+        if (state.currentSessionId !== sessionId) return;
+        const session = state.lastSessions?.find(s => s.id === sessionId);
+        if (!session) return;
+        const titleEl = document.getElementById('header-chat-title');
+        if (titleEl) titleEl.textContent = session.title;
+        const iconImg = document.getElementById('header-chat-icon');
+        const defaultIcon = document.getElementById('header-default-icon');
+        if (session.has_icon && iconImg && defaultIcon) {
+            iconImg.src = `/api/sessions/${session.id}/icon?t=${Date.now()}`;
+            iconImg.style.display = 'block';
+            defaultIcon.style.display = 'none';
+        } else if (iconImg && defaultIcon) {
+            iconImg.style.display = 'none';
+            defaultIcon.style.display = 'block';
+        }
+    };
+
+    const stopPollingSessionIcon = (sessionId) => {
+        if (state.activeIconPollTimers.has(sessionId)) {
+            clearInterval(state.activeIconPollTimers.get(sessionId));
+            state.activeIconPollTimers.delete(sessionId);
+        }
+    };
+
+    const startPollingSessionIcon = (sessionId, { expectNewIcon = false } = {}) => {
+        stopPollingSessionIcon(sessionId);
+
+        let ticks = 0;
+        const maxTicks = 120;
+        let sawGenerating = false;
+
+        const checkIconStatus = async () => {
+            if (document.visibilityState === "hidden") return;
+            ticks++;
+            if (ticks > maxTicks) {
+                stopPollingSessionIcon(sessionId);
+                return;
+            }
+
+            try {
+                const res = await api.getSessionStatus(sessionId);
+                if (!res.ok) {
+                    if (res.status === 404) {
+                        stopPollingSessionIcon(sessionId);
+                    }
+                    return;
+                }
+                const data = await res.json();
+                if (data.is_generating_icon) {
+                    sawGenerating = true;
+                    return;
+                }
+
+                const shouldRefresh = (!expectNewIcon && data.has_icon) ||
+                                      (expectNewIcon && (sawGenerating || ticks >= 2) && data.has_icon);
+
+                if (shouldRefresh) {
+                    stopPollingSessionIcon(sessionId);
+                    const sessions = await api.getSessions();
+                    state.lastSessions = sessions;
+                    sidebarView.renderSessionList(sessions, selectSession, deleteSessionPrompt);
+                    if (state.currentSessionId === sessionId) {
+                        updateHeaderSessionInfo(sessionId);
+                    }
+                } else if (!data.is_generating_icon && !data.has_icon && ticks >= 4) {
+                    stopPollingSessionIcon(sessionId);
+                }
+            } catch (err) {
+                console.warn("Icon polling error for session", sessionId, err);
+            }
+        };
+
+        const timerId = setInterval(checkIconStatus, 1000);
+        state.activeIconPollTimers.set(sessionId, timerId);
+        setTimeout(checkIconStatus, 150);
+    };
+
     const startPollingSession = (sessionId) => {
         if (state.activePollTimers.has(sessionId)) return;
 
@@ -297,20 +375,9 @@ document.addEventListener("DOMContentLoaded", () => {
         if (systemPromptBtn) systemPromptBtn.disabled = false;
 
         const session = state.lastSessions?.find(s => s.id === sessionId);
-        if (session) {
-            const titleEl = document.getElementById('header-chat-title');
-            if (titleEl) titleEl.textContent = session.title;
-            const iconImg = document.getElementById('header-chat-icon');
-            const defaultIcon = document.getElementById('header-default-icon');
-            
-            if (session.has_icon && iconImg && defaultIcon) {
-                iconImg.src = `/api/sessions/${session.id}/icon?t=${Date.now()}`;
-                iconImg.style.display = 'block';
-                defaultIcon.style.display = 'none';
-            } else if (iconImg && defaultIcon) {
-                iconImg.style.display = 'none';
-                defaultIcon.style.display = 'block';
-            }
+        updateHeaderSessionInfo(sessionId);
+        if (session && !session.has_icon && session.title && session.title !== "Neuer Chat") {
+            startPollingSessionIcon(sessionId, { expectNewIcon: false });
         }
 
         const shouldShowLoading = isSwitchingSession || !chatContainer || chatContainer.children.length === 0;
@@ -729,6 +796,13 @@ document.addEventListener("DOMContentLoaded", () => {
                         const sessions = await api.getSessions();
                         state.lastSessions = sessions;
                         sidebarView.renderSessionList(sessions, selectSession, deleteSessionPrompt);
+                        if (state.currentSessionId === submittedSessionId) {
+                            updateHeaderSessionInfo(submittedSessionId);
+                        }
+                        const curSess = sessions.find(s => s.id === submittedSessionId);
+                        if (baselineHistoryCount === 0 || !curSess?.has_icon) {
+                            startPollingSessionIcon(submittedSessionId, { expectNewIcon: false });
+                        }
                     } catch (err) {
                         console.warn("Failed to refresh sessions after stream", err);
                     }
@@ -754,24 +828,13 @@ document.addEventListener("DOMContentLoaded", () => {
                     const sessions = await api.getSessions();
                     state.lastSessions = sessions;
                     sidebarView.renderSessionList(sessions, selectSession, deleteSessionPrompt);
+                    if (state.currentSessionId === submittedSessionId) {
+                        updateHeaderSessionInfo(submittedSessionId);
+                    }
 
                     const curSess = sessions.find(s => s.id === submittedSessionId);
-                    if (curSess && !curSess.has_icon) {
-                        setTimeout(async () => {
-                            if (state.currentSessionId === submittedSessionId) {
-                                await loadSessions();
-                                const refreshedSession = state.lastSessions?.find(s => s.id === submittedSessionId);
-                                if (refreshedSession && refreshedSession.has_icon) {
-                                    const iconImg = document.getElementById('header-chat-icon');
-                                    const defaultIcon = document.getElementById('header-default-icon');
-                                    if (iconImg && defaultIcon) {
-                                        iconImg.src = `/api/sessions/${submittedSessionId}/icon?t=${Date.now()}`;
-                                        iconImg.style.display = 'block';
-                                        defaultIcon.style.display = 'none';
-                                    }
-                                }
-                            }
-                        }, 3000);
+                    if (baselineHistoryCount === 0 || !curSess?.has_icon) {
+                        startPollingSessionIcon(submittedSessionId, { expectNewIcon: false });
                     }
                 }
 
@@ -1003,6 +1066,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     modals.closeSystemPromptModal();
                     if (titlePromise) {
                         await loadSessions();
+                        startPollingSessionIcon(state.currentSessionId, { expectNewIcon: true });
                     }
                 } else {
                     let errMsg = "Fehler beim Speichern der Einstellungen.";

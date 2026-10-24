@@ -34,7 +34,12 @@ def test_session_status_endpoint_idle(mock_exists):
     
     response = client.get("/api/sessions/sess-123/status")
     assert response.status_code == 200
-    assert response.json() == {"id": "sess-123", "is_processing": False}
+    assert response.json() == {
+        "id": "sess-123",
+        "is_processing": False,
+        "is_generating_icon": False,
+        "has_icon": False
+    }
 
 
 @patch("app.main.get_session_title")
@@ -103,7 +108,12 @@ async def test_session_status_endpoint_processing(
         # Verify status endpoint returns is_processing: True
         status_resp = await async_client.get("/api/sessions/sess-123/status")
         assert status_resp.status_code == 200
-        assert status_resp.json() == {"id": "sess-123", "is_processing": True}
+        assert status_resp.json() == {
+            "id": "sess-123",
+            "is_processing": True,
+            "is_generating_icon": False,
+            "has_icon": False
+        }
 
         # Verify history endpoint returns X-Is-Processing: true header
         history_resp = await async_client.get("/api/sessions/sess-123/history")
@@ -119,7 +129,12 @@ async def test_session_status_endpoint_processing(
         # Verify status returns is_processing: False after completion
         status_after = await async_client.get("/api/sessions/sess-123/status")
         assert status_after.status_code == 200
-        assert status_after.json() == {"id": "sess-123", "is_processing": False}
+        assert status_after.json() == {
+            "id": "sess-123",
+            "is_processing": False,
+            "is_generating_icon": False,
+            "has_icon": False
+        }
 
         # Verify history returns X-Is-Processing: false header
         history_after = await async_client.get("/api/sessions/sess-123/history")
@@ -210,4 +225,9 @@ async def test_session_status_cleanup_on_error(
         # Despite error, status must be cleaned up to False
         status_resp = await async_client.get("/api/sessions/sess-123/status")
         assert status_resp.status_code == 200
-        assert status_resp.json() == {"id": "sess-123", "is_processing": False}
+        assert status_resp.json() == {
+            "id": "sess-123",
+            "is_processing": False,
+            "is_generating_icon": False,
+            "has_icon": False
+        }

@@ -29,6 +29,11 @@ class AGYService:
         self._cached_model_catalog: Optional[Dict[str, Any]] = None
         self._catalog_lock = asyncio.Lock()
         self._active_icon_paths: set[str] = set()
+        self._pending_force_icons: set[str] = set()
+
+    def is_generating_icon(self, output_path: str) -> bool:
+        """Checks whether an icon generation task is currently active or queued for the given output path."""
+        return output_path in self._active_icon_paths or output_path in self._pending_force_icons
 
     async def get_model_catalog(self, force_refresh: bool = False) -> Dict[str, Any]:
         """
@@ -417,11 +422,21 @@ class AGYService:
         title: str,
         output_path: str,
         user_context: Optional[str] = None,
-        ai_context: Optional[str] = None
+        ai_context: Optional[str] = None,
+        force: bool = False
     ):
-        if output_path in self._active_icon_paths or os.path.exists(output_path):
+        if not force and (output_path in self._active_icon_paths or os.path.exists(output_path)):
             logger.debug(f"Icon generation already in progress or completed for: {output_path}")
             return
+
+        if force and output_path in self._active_icon_paths:
+            self._pending_force_icons.add(output_path)
+            try:
+                while output_path in self._active_icon_paths:
+                    await asyncio.sleep(0.05)
+            finally:
+                self._pending_force_icons.discard(output_path)
+
         self._active_icon_paths.add(output_path)
         try:
             return await self._execute_generate_chat_icon(title, output_path, user_context, ai_context)
@@ -498,10 +513,20 @@ class AGYService:
                 if match:
                     svg_code = sanitize_svg(match.group(1))
                     try:
-                        with open(output_path, "w", encoding="utf-8") as f:
+                        dir_name = os.path.dirname(output_path)
+                        if dir_name:
+                            os.makedirs(dir_name, exist_ok=True)
+                        tmp_path = f"{output_path}.tmp.{uuid.uuid4().hex[:8]}"
+                        with open(tmp_path, "w", encoding="utf-8") as f:
                             f.write(svg_code)
+                        os.replace(tmp_path, output_path)
                         return
                     except Exception as e:
+                        if 'tmp_path' in locals() and os.path.exists(tmp_path):
+                            try:
+                                os.remove(tmp_path)
+                            except OSError:
+                                pass
                         logger.error(f"Failed to save generated icon SVG to {output_path}: {e}", exc_info=True)
                         return
 

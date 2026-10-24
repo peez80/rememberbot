@@ -107,3 +107,75 @@ async def test_generate_chat_icon_deduplicates_concurrent_calls_for_same_path(ag
 
     assert mock_exec.call_count == 1
     assert os.path.exists(target_path)
+
+
+@pytest.mark.asyncio
+async def test_generate_chat_icon_skips_existing_when_not_forced(agy_service, tmp_path):
+    import os
+
+    target_path = str(tmp_path / "icon.svg")
+    with open(target_path, "w", encoding="utf-8") as f:
+        f.write('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100"/></svg>')
+
+    with patch("asyncio.create_subprocess_exec") as mock_exec:
+        await agy_service.generate_chat_icon("Neuer Titel", target_path, force=False)
+
+    mock_exec.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_generate_chat_icon_overwrites_existing_when_forced(agy_service, tmp_path):
+    import os
+
+    target_path = str(tmp_path / "icon.svg")
+    with open(target_path, "w", encoding="utf-8") as f:
+        f.write('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100"/></svg>')
+
+    mock_process = AsyncMock()
+    mock_process.communicate.return_value = (
+        b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="35" fill="#10b981"/></svg>',
+        b''
+    )
+    mock_process.returncode = 0
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_process) as mock_exec:
+        await agy_service.generate_chat_icon("Aktualisierter Titel", target_path, force=True)
+
+    mock_exec.assert_called_once()
+    assert os.path.exists(target_path)
+    with open(target_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    assert "<circle" in content
+    assert "#10b981" in content
+
+
+@pytest.mark.asyncio
+async def test_is_generating_icon_tracks_active_generation(agy_service, tmp_path):
+    import asyncio
+
+    target_path = str(tmp_path / "icon.svg")
+    started_event = asyncio.Event()
+    finish_event = asyncio.Event()
+
+    mock_process = AsyncMock()
+
+    async def controlled_communicate():
+        started_event.set()
+        await finish_event.wait()
+        return (b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40"/></svg>', b'')
+
+    mock_process.communicate.side_effect = controlled_communicate
+    mock_process.returncode = 0
+
+    assert agy_service.is_generating_icon(target_path) is False
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+        task = asyncio.create_task(agy_service.generate_chat_icon("Live Check", target_path))
+        await asyncio.wait_for(started_event.wait(), timeout=2.0)
+
+        assert agy_service.is_generating_icon(target_path) is True
+
+        finish_event.set()
+        await task
+
+    assert agy_service.is_generating_icon(target_path) is False

@@ -201,3 +201,75 @@ async def test_generate_chat_icon_strips_thinking_tags(tmp_path):
     assert "fake" not in content
 
 
+@pytest.mark.asyncio
+async def test_update_title_triggers_forced_icon_regeneration(tmp_path):
+    from unittest.mock import AsyncMock
+
+    mock_auth()
+    with patch("app.storage.DATA_DIR", str(tmp_path)):
+        init_session_storage("testuser", "sess-1")
+        session_file = os.path.join(tmp_path, "testuser", "sessions", "sess-1", "session.json")
+        with open(session_file, "w", encoding="utf-8") as f:
+            json.dump({
+                "id": "sess-1",
+                "title": "Alter Titel",
+                "created_at": "2026-01-01T00:00:00Z",
+                "history": [
+                    {"text": "User Kontext", "is_user": True},
+                    {"text": "AI Kontext", "is_user": False}
+                ]
+            }, f)
+
+        # Create existing icon.svg to simulate already having an icon
+        icon_file = os.path.join(tmp_path, "testuser", "sessions", "sess-1", "icon.svg")
+        with open(icon_file, "w", encoding="utf-8") as f:
+            f.write('<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>')
+
+        with patch.object(agy_client, "generate_chat_icon", new_callable=AsyncMock) as mock_gen_icon:
+            res = client.put("/api/sessions/sess-1/title", json={"title": "Neuer Titel"})
+            assert res.status_code == 200
+            mock_gen_icon.assert_called_once()
+            _, call_kwargs = mock_gen_icon.call_args
+            assert call_kwargs.get("force") is True
+
+
+@pytest.mark.asyncio
+async def test_session_status_includes_icon_generation_fields(tmp_path):
+    mock_auth()
+    with patch("app.storage.DATA_DIR", str(tmp_path)):
+        init_session_storage("testuser", "sess-1")
+        session_file = os.path.join(tmp_path, "testuser", "sessions", "sess-1", "session.json")
+        with open(session_file, "w", encoding="utf-8") as f:
+            json.dump({"id": "sess-1", "title": "Test Chat", "created_at": "2026-01-01T00:00:00Z", "history": []}, f)
+
+        icon_file = os.path.join(tmp_path, "testuser", "sessions", "sess-1", "icon.svg")
+
+        # 1. Idle, no icon
+        res1 = client.get("/api/sessions/sess-1/status")
+        assert res1.status_code == 200
+        data1 = res1.json()
+        assert data1["is_generating_icon"] is False
+        assert data1["has_icon"] is False
+
+        # 2. Generating icon
+        agy_client._active_icon_paths.add(icon_file)
+        try:
+            res2 = client.get("/api/sessions/sess-1/status")
+            assert res2.status_code == 200
+            data2 = res2.json()
+            assert data2["is_generating_icon"] is True
+            assert data2["has_icon"] is False
+        finally:
+            agy_client._active_icon_paths.discard(icon_file)
+
+        # 3. Icon completed
+        with open(icon_file, "w", encoding="utf-8") as f:
+            f.write('<svg xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="10" r="5"/></svg>')
+
+        res3 = client.get("/api/sessions/sess-1/status")
+        assert res3.status_code == 200
+        data3 = res3.json()
+        assert data3["is_generating_icon"] is False
+        assert data3["has_icon"] is True
+
+
