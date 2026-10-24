@@ -71,3 +71,73 @@ def test_auth_service_backend_injection():
     assert service.authenticate("testuser", "wrong") is False
     assert service.get_valid_users() == {"testuser": "testpass"}
 
+
+def test_auth_service_load_sessions_valid_and_expired(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    sessions_file = data_dir / "auth_sessions.json"
+
+    now = time.time()
+    sessions_file.write_text(
+        f'{{"valid_tok": {{"username": "alice", "expires_at": {now + 1000}}}, '
+        f'"expired_tok": {{"username": "bob", "expires_at": {now - 100}}}, '
+        f'"legacy_tok": "charlie"}}'
+    )
+
+    service = AuthService(data_dir=str(data_dir))
+    assert service.verify_session("valid_tok") == "alice"
+    assert service.verify_session("expired_tok") is None
+    assert service.verify_session("legacy_tok") == "charlie"
+
+
+def test_auth_service_load_sessions_corrupted_json(tmp_path, caplog):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    sessions_file = data_dir / "auth_sessions.json"
+    sessions_file.write_text("NOT_VALID_JSON{{{")
+
+    import logging
+    with caplog.at_level(logging.WARNING, logger="app.services.auth_service"):
+        service = AuthService(data_dir=str(data_dir))
+
+    assert "Failed to load auth sessions" in caplog.text
+    assert service.active_sessions == {}
+
+
+def test_auth_service_save_sessions_io_error(tmp_path, caplog, monkeypatch):
+    data_dir = str(tmp_path / "data")
+    service = AuthService(data_dir=data_dir)
+
+    import logging
+    def mock_atomic_write(*args, **kwargs):
+        raise OSError("Disk write failed")
+
+    monkeypatch.setattr("app.storage.atomic_write_json", mock_atomic_write)
+
+    with caplog.at_level(logging.ERROR, logger="app.services.auth_service"):
+        service.create_session("alice")
+
+    assert "Failed to save auth sessions" in caplog.text
+
+
+def test_auth_service_rate_limit_prunes_empty_keys(tmp_path):
+    service = AuthService(data_dir=str(tmp_path))
+    service.failed_login_attempts.clear()
+
+    client_ip = "192.168.1.100"
+    username = "attacker"
+    rate_key = f"{client_ip}:{username}"
+
+    old_time = time.time() - 120.0
+    service.failed_login_attempts[rate_key] = [old_time]
+    service.failed_login_attempts[client_ip] = [old_time]
+
+    assert rate_key in service.failed_login_attempts
+    assert client_ip in service.failed_login_attempts
+
+    allowed = service.check_rate_limit(client_ip, username)
+    assert allowed is True
+
+    assert rate_key not in service.failed_login_attempts
+    assert client_ip not in service.failed_login_attempts
+

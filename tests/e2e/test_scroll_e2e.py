@@ -194,3 +194,85 @@ async def test_image_loading_preserves_scroll_position_e2e():
 
         await browser.close()
 
+
+@pytest.mark.asyncio
+async def test_progressive_message_batching_on_scroll_top_e2e():
+    """Verify that older messages (>20) are progressively prepended into the DOM when scrolling to the top."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+
+        await page.route("**/api/auth/status", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"authenticated": true, "username": "testuser"}'
+        ))
+        await page.route("**/api/sessions", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='[{"id": "sess-batch", "title": "Batch Test Chat", "created_at": "2026-01-01T00:00:00Z"}]'
+        ))
+
+        # Generate 35 messages (0 to 34)
+        history_35 = []
+        for i in range(35):
+            history_35.append({
+                "text": f"Batch Message {i:02d} with extra padding to ensure height",
+                "is_user": (i % 2 == 0),
+                "image_urls": [],
+                "timestamp": f"2026-01-01T{i:02d}:00:00Z"
+            })
+
+        await page.route("**/api/sessions/sess-batch/settings", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"prompt": ""}'
+        ))
+        await page.route("**/api/sessions/sess-batch/history", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(history_35)
+        ))
+
+        await page.goto(f"http://127.0.0.1:{SERVER_PORT}")
+
+        # Remove auth modal explicitly
+        await page.evaluate("""() => {
+            const modal = document.getElementById('auth-modal');
+            if (modal) modal.remove();
+        }""")
+
+        chat_container = page.locator("#chat-container")
+        await expect(chat_container).to_be_visible()
+
+        # Wait for messages to render
+        await page.wait_for_selector(".message")
+
+        # Initial render should only render the latest 20 messages (indices 15..34)
+        initial_count = await page.evaluate("() => document.querySelectorAll('#chat-container .message').length")
+        assert initial_count == 20
+
+        # Oldest message 00 should not yet be in DOM
+        has_msg_00 = await page.evaluate("() => document.body.innerText.includes('Batch Message 00')")
+        assert not has_msg_00
+
+        # Scroll to top to trigger progressive prepending
+        await page.evaluate("""() => {
+            const c = document.getElementById('chat-container');
+            c.scrollTop = 0;
+            c.dispatchEvent(new Event('scroll'));
+        }""")
+
+        # Wait for older messages to be prepended into the DOM
+        await page.wait_for_function("() => document.querySelectorAll('#chat-container .message').length === 35")
+
+        total_count = await page.evaluate("() => document.querySelectorAll('#chat-container .message').length")
+        assert total_count == 35
+
+        # Now Message 00 must be in DOM
+        has_msg_00_now = await page.evaluate("() => document.body.innerText.includes('Batch Message 00')")
+        assert has_msg_00_now
+
+        await browser.close()
+
+

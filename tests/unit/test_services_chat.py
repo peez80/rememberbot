@@ -198,3 +198,82 @@ async def test_chat_service_triggers_icon_after_process_chat(chat_service):
             assert "Reiseziele in Italien" in call_kwargs.get("ai_context", "")
 
 
+@pytest.mark.asyncio
+async def test_chat_service_injects_technical_prompt(chat_service):
+    username = "alice"
+    session_id = await chat_service.session_service.create_session(username, "Technical Prompt Test")
+    await chat_service.session_service.update_session_settings(
+        username,
+        session_id,
+        prompt="Du bist ein präziser Assistent.",
+        include_gps=True
+    )
+
+    with patch("app.services.chat_service.agy_client.process_message", new_callable=AsyncMock) as mock_proc:
+        mock_proc.return_value = {
+            "reply": "Hier ist deine Datei: [test.csv](test.csv)",
+            "context_truncated": False
+        }
+        result = await chat_service.process_chat(
+            username=username,
+            session_id=session_id,
+            message="Erstelle test.csv",
+            location="Lat: 52.520, Lon: 13.405",
+            valid_uploads=[]
+        )
+
+        call_kwargs = mock_proc.call_args.kwargs
+        system_prompt = call_kwargs.get("system_prompt", "")
+        assert "TECHNISCHE VORAUSSETZUNG:" in system_prompt
+        assert "Du bist ein präziser Assistent." in system_prompt
+        assert "Lat: 52.520, Lon: 13.405" in system_prompt
+        assert f"/app/data/{username}/{session_id}/data/test.csv" in result["reply"]
+
+
+@pytest.mark.asyncio
+async def test_chat_service_stream_consumer_exception_handling(chat_service, caplog):
+    username = "alice"
+    session_id = await chat_service.session_service.create_session(username, "Error Chat")
+
+    async def mock_failing_stream(*args, **kwargs):
+        yield {"type": "delta", "text": "Part 1"}
+        raise RuntimeError("Subprocess pipe broken")
+
+    import logging
+    with caplog.at_level(logging.ERROR):
+        with patch("app.services.chat_service.agy_client.stream_message", side_effect=mock_failing_stream):
+            generator = chat_service.stream_chat_generator(
+                username=username,
+                session_id=session_id,
+                message="Will crash mid-stream"
+            )
+            events = [ev async for ev in generator]
+
+            assert any("Streaming-Fehler" in ev for ev in events)
+            assert "Error in background_stream_consumer" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_chat_service_stream_finalize_without_done_event(chat_service):
+    username = "alice"
+    session_id = await chat_service.session_service.create_session(username, "No Done Chat")
+
+    async def mock_stream_no_done(*args, **kwargs):
+        yield {"type": "delta", "text": "Partial output without done event"}
+
+    with patch("app.services.chat_service.agy_client.stream_message", side_effect=mock_stream_no_done):
+        generator = chat_service.stream_chat_generator(
+            username=username,
+            session_id=session_id,
+            message="No done test"
+        )
+        events = [ev async for ev in generator]
+        assert any("done" in ev for ev in events)
+
+        # Ensure history was finalized with the partial output
+        history = await chat_service.session_service.get_session_history(username, session_id)
+        assert len(history) == 2
+        assert history[1]["text"] == "Partial output without done event"
+
+
+

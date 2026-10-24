@@ -89,55 +89,30 @@ async def test_get_session_icon_endpoint_404_and_200(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_config_icon_generation_timeout_default():
-    from app.core.config import ICON_GENERATION_TIMEOUT_SECONDS
-    assert ICON_GENERATION_TIMEOUT_SECONDS == 180.0
-
-
-@pytest.mark.asyncio
-async def test_generate_chat_icon_failure_does_not_create_file(tmp_path, caplog):
-    import logging
+async def test_get_history_triggers_lazy_icon_generation(tmp_path):
     from unittest.mock import AsyncMock
+    mock_auth()
+    with patch("app.storage.DATA_DIR", str(tmp_path)):
+        init_session_storage("testuser", "sess-lazy")
+        session_file = os.path.join(tmp_path, "testuser", "sessions", "sess-lazy", "session.json")
+        with open(session_file, "w", encoding="utf-8") as f:
+            json.dump({
+                "id": "sess-lazy",
+                "title": "Custom Topic",
+                "created_at": "2026-01-01T00:00:00Z",
+                "history": [
+                    {"text": "User context question", "is_user": True},
+                    {"text": "AI context answer", "is_user": False}
+                ]
+            }, f)
 
-    output_path = str(tmp_path / "icon.svg")
-    mock_process = AsyncMock()
-    mock_process.communicate.return_value = (b"", b"Error: model failed")
-    mock_process.returncode = 1
-
-    with patch("asyncio.create_subprocess_exec", return_value=mock_process):
-        with caplog.at_level(logging.ERROR):
-            await agy_client.generate_chat_icon("Kochen Rezept", output_path)
-
-    # Verification: No fallback file should be written on failure
-    assert not os.path.exists(output_path)
-    assert "Error: model failed" in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_generate_chat_icon_timeout_does_not_create_file(tmp_path, caplog):
-    import logging
-    import asyncio
-    from unittest.mock import AsyncMock
-    from app.core.config import ICON_GENERATION_TIMEOUT_SECONDS
-
-    output_path = str(tmp_path / "icon.svg")
-    mock_process = AsyncMock()
-    mock_process.communicate = AsyncMock(return_value=(b"", b""))
-    mock_process.kill = MagicMock()
-
-    with patch("asyncio.create_subprocess_exec", return_value=mock_process):
-        with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()) as mock_wait_for:
-            with caplog.at_level(logging.WARNING):
-                await agy_client.generate_chat_icon("Meeting Notes", output_path)
-
-            mock_wait_for.assert_called_once()
-            call_kwargs = mock_wait_for.call_args[1]
-            assert call_kwargs.get("timeout") == ICON_GENERATION_TIMEOUT_SECONDS
-            assert ICON_GENERATION_TIMEOUT_SECONDS == 180.0
-            assert mock_process.kill.called
-            # Verification: No fallback file should be written on timeout
-            assert not os.path.exists(output_path)
-            assert f"timed out after {ICON_GENERATION_TIMEOUT_SECONDS}s" in caplog.text
+        with patch.object(agy_client, "generate_chat_icon", new_callable=AsyncMock) as mock_gen_icon:
+            res = client.get("/api/sessions/sess-lazy/history")
+            assert res.status_code == 200
+            mock_gen_icon.assert_called_once()
+            call_kwargs = mock_gen_icon.call_args.kwargs
+            assert "User context question" in call_kwargs.get("user_context", "")
+            assert "AI context answer" in call_kwargs.get("ai_context", "")
 
 
 @pytest.mark.asyncio

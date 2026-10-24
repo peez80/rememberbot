@@ -86,3 +86,43 @@ async def test_session_conversation_id_storage(session_service):
     await session_service.set_session_conversation_id("alice", session_id, None)
     assert await session_service.get_session_conversation_id("alice", session_id) is None
 
+
+@pytest.mark.asyncio
+async def test_session_service_operations_on_nonexistent_session_log_warning(session_service, caplog):
+    import logging
+    with caplog.at_level(logging.WARNING):
+        # All of these should gracefully log warnings without raising unhandled exceptions
+        await session_service.save_session_message("alice", "nonexistent-sess", {"text": "hi"})
+        await session_service.update_session_title("alice", "nonexistent-sess", "New Title")
+        await session_service.update_session_settings("alice", "nonexistent-sess", "prompt", True)
+        await session_service.set_session_conversation_id("alice", "nonexistent-sess", "conv-1")
+
+    assert "does not exist" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_session_json_schema_integrity(session_service):
+    session_id = await session_service.create_session("alice", "Schema Test Chat")
+    session_path = os.path.join(session_service.storage.data_dir, "alice", "sessions", session_id, "session.json")
+
+    import json
+    with open(session_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    expected_schema = {
+        "id": str,
+        "title": str,
+        "created_at": str,
+        "history": list,
+        "system_prompt": str,
+        "include_gps": bool
+    }
+
+    for key, expected_type in expected_schema.items():
+        assert key in data, f"Missing key in session.json: {key}"
+        assert isinstance(data[key], expected_type), f"Wrong type for {key}"
+
+    for key in data.keys():
+        assert key in expected_schema, f"Unexpected key in session.json: {key}"
+
+

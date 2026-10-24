@@ -115,6 +115,12 @@ async def test_session_status_endpoint_processing(
             "has_icon": False
         }
 
+        # Verify user message was saved to history immediately before process_message returned
+        assert mock_save_msg.called
+        saved_msg = mock_save_msg.call_args_list[0][0][2]
+        assert saved_msg["is_user"] is True
+        assert saved_msg["text"] == "Wie ist das Wetter?"
+
         # Verify history endpoint returns X-Is-Processing: true header
         history_resp = await async_client.get("/api/sessions/sess-123/history")
         assert history_resp.status_code == 200
@@ -231,3 +237,25 @@ async def test_session_status_cleanup_on_error(
             "is_generating_icon": False,
             "has_icon": False
         }
+
+
+@pytest.mark.asyncio
+async def test_chat_endpoint_save_attachments_unexpected_error_unregisters_processing(caplog):
+    import logging
+    from unittest.mock import AsyncMock
+    mock_auth()
+    with patch("app.services.session_service.session_service.check_session_exists", new_callable=AsyncMock) as mock_exists:
+        mock_exists.return_value = True
+        with patch("app.services.session_service.session_service.save_user_attachments", side_effect=OSError("Disk write failed")):
+            with caplog.at_level(logging.ERROR, logger="app.routers.chat"):
+                transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+                async with httpx.AsyncClient(transport=transport, base_url="http://test") as async_client:
+                    # Provide an attachment so save_user_attachments is triggered
+                    files = {"files": ("test.txt", b"hello", "text/plain")}
+                    res = await async_client.post("/api/sessions/sess-fail/chat", data={"message": "hi"}, files=files)
+                    assert res.status_code == 500
+                    # Ensure supervisor has unregistered the session
+                    from app.core.tasks import supervisor
+                    assert supervisor.is_session_active("testuser", "sess-fail") is False
+                    assert "Failed to process/save file upload" in caplog.text
+

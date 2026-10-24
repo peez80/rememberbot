@@ -356,3 +356,92 @@ async def test_agy_generate_icon_logging_start_and_finish(caplog, tmp_path):
                 for record in caplog.records if record.levelno == logging.INFO
             )
 
+
+@pytest.mark.asyncio
+async def test_lifespan_invalid_user_backend_raises_and_logs(caplog, monkeypatch):
+    from app.main import lifespan
+    monkeypatch.setattr("app.services.user_backends.factory.USER_BACKEND", "completely_invalid_backend")
+
+    with caplog.at_level(logging.ERROR, logger="app.main"):
+        with pytest.raises(ValueError):
+            async with lifespan(app):
+                pass
+
+    assert "Fehler bei Konfiguration des Benutzerbackends" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_validate_agy_default_configuration_branches(caplog, monkeypatch):
+    from app.main import validate_agy_default_configuration
+
+    # 1. Early return if both are empty
+    monkeypatch.setattr("app.main.AGY_DEFAULT_MODEL", "")
+    monkeypatch.setattr("app.main.AGY_DEFAULT_THINKING_EFFORT", "")
+    with caplog.at_level(logging.DEBUG, logger="app.main"):
+        await validate_agy_default_configuration()
+    assert "Keine abweichenden AGY Defaults" in caplog.text
+
+    # 2. TimeoutError branch
+    monkeypatch.setattr("app.main.AGY_DEFAULT_MODEL", "gemini-3.8-flash")
+    mock_proc = AsyncMock()
+    mock_proc.kill = MagicMock()
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()):
+            with caplog.at_level(logging.WARNING, logger="app.main"):
+                await validate_agy_default_configuration()
+    assert "Timeout" in caplog.text
+    mock_proc.kill.assert_called_once()
+
+    # 3. FileNotFoundError branch
+    with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError("agy")):
+        with caplog.at_level(logging.INFO, logger="app.main"):
+            await validate_agy_default_configuration()
+    assert "agy Executable nicht gefunden" in caplog.text
+
+    # 4. Unexpected Exception branch
+    with patch("asyncio.create_subprocess_exec", side_effect=PermissionError("denied")):
+        with caplog.at_level(logging.WARNING, logger="app.main"):
+            await validate_agy_default_configuration()
+    assert "Unerwarteter Fehler bei Startup-Validierung" in caplog.text
+
+
+def test_favicon_missing_returns_404_and_logs_warning(caplog):
+    test_client = TestClient(app)
+    with patch("os.path.exists", return_value=False):
+        with caplog.at_level(logging.WARNING, logger="app.main"):
+            res = test_client.get("/favicon.ico")
+    assert res.status_code == 404
+    assert "Favicon not found" in caplog.text
+
+
+def test_serve_index_read_error_returns_500_and_logs_error(caplog):
+    test_client = TestClient(app, raise_server_exceptions=False)
+    with patch("builtins.open", side_effect=OSError("Read permission denied")):
+        with caplog.at_level(logging.ERROR, logger="app.main"):
+            res = test_client.get("/")
+    assert res.status_code == 500
+    assert "Failed to load index.html" in caplog.text
+
+
+def test_get_static_asset_version_oserror_fallback():
+    from app.main import _get_static_asset_version
+    with patch("os.path.getmtime", side_effect=OSError("Missing file")):
+        v = _get_static_asset_version("/nonexistent/file.js")
+    assert v == "1"
+
+
+def test_http_exception_handler_500_logs_error(caplog):
+    test_client = TestClient(app, raise_server_exceptions=False)
+    from fastapi import HTTPException
+
+    @app.get("/api/test-http-503")
+    async def throw_503():
+        raise HTTPException(status_code=503, detail="Service Unavailable in Test")
+
+    with caplog.at_level(logging.ERROR, logger="app.main"):
+        res = test_client.get("/api/test-http-503")
+
+    assert res.status_code == 503
+    assert "HTTP 503 on GET /api/test-http-503" in caplog.text
+
+

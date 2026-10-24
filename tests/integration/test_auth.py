@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
 from app.main import app
+from app.services.auth_service import auth_service
 
 client = TestClient(app)
 
@@ -50,3 +51,54 @@ def test_logout():
     status_response = client.get("/api/auth/status")
     assert status_response.json() == {"authenticated": False}
     client.cookies.clear()
+
+
+def test_oauth_login_endpoint_error_handling(caplog):
+    from unittest.mock import AsyncMock
+    import logging
+
+    mock_oauth_backend = MagicMock()
+    mock_oauth_backend.is_oauth = True
+    mock_oauth_backend.get_authorization_url = AsyncMock(side_effect=RuntimeError("Discovery DNS lookup failed"))
+
+    with patch.object(auth_service, "backend", mock_oauth_backend):
+        with caplog.at_level(logging.ERROR):
+            res = client.get("/api/auth/oauth/login", follow_redirects=False)
+
+    assert res.status_code == 500
+    assert "OAuth Authorize-URL konnte nicht erstellt werden" in res.json()["detail"]
+    assert "Fehler bei Erstellung der OAuth Authorize-URL" in caplog.text
+
+
+def test_oauth_callback_disabled_returns_400():
+    mock_non_oauth_backend = MagicMock()
+    mock_non_oauth_backend.is_oauth = False
+
+    with patch.object(auth_service, "backend", mock_non_oauth_backend):
+        res = client.get("/api/auth/oauth/callback?code=123&state=abc", follow_redirects=False)
+    assert res.status_code == 400
+    assert "OAuth ist nicht aktiviert" in res.json()["detail"]
+
+
+def test_oauth_callback_missing_or_malformed_state_cookie(caplog):
+    import logging
+    mock_oauth_backend = MagicMock()
+    mock_oauth_backend.is_oauth = True
+
+    # 1. Missing cookie
+    with patch.object(auth_service, "backend", mock_oauth_backend):
+        with caplog.at_level(logging.WARNING):
+            res = client.get("/api/auth/oauth/callback?code=123&state=abc", follow_redirects=False)
+    assert res.status_code in (302, 307)
+    assert res.headers["location"] == "/?error=state_mismatch"
+    assert "OAuth State-Cookie fehlt" in caplog.text
+
+    # 2. Malformed cookie without ':'
+    client.cookies.set("oauth_state", "invalid_no_colon_token")
+    with patch.object(auth_service, "backend", mock_oauth_backend):
+        with caplog.at_level(logging.WARNING):
+            res = client.get("/api/auth/oauth/callback?code=123&state=abc", follow_redirects=False)
+    assert res.status_code in (302, 307)
+    assert res.headers["location"] == "/?error=state_mismatch"
+    client.cookies.clear()
+

@@ -94,3 +94,18 @@ def test_validate_user_backend():
     with pytest.raises(ValueError) as exc_info:
         validate_user_backend("unknown_backend")
     assert "unknown_backend" in str(exc_info.value)
+
+
+def test_json_backend_non_dict_json_logs_error(tmp_path, caplog):
+    data_dir = str(tmp_path / "data")
+    config_dir = tmp_path / "data" / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    list_json_file = config_dir / "users.json"
+    list_json_file.write_text(json.dumps(["alice", "bob"]), encoding="utf-8")
+
+    backend = JsonUserBackend(data_dir=data_dir)
+    with caplog.at_level(logging.ERROR):
+        users = backend.get_valid_users()
+
+    assert users == {}
+    assert "Invalid JSON format in users config" in caplog.text

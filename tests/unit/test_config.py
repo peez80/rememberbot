@@ -89,3 +89,20 @@ def test_default_config_constants():
     assert "conversations" in config.AGY_CONVERSATIONS_DIR
     assert isinstance(config.CORS_ALLOWED_ORIGINS, list)
     assert "http://localhost:8000" in config.CORS_ALLOWED_ORIGINS
+
+
+def test_is_safe_session_id_strict_validation():
+    # Invalid IDs with leading flags / symbols
+    assert config.is_safe_session_id("-session") is False
+    assert config.is_safe_session_id("--all") is False
+    assert config.is_safe_session_id("-rf") is False
+    assert config.is_safe_session_id("_leading_underscore") is False
+    assert config.is_safe_session_id("-") is False
+    assert config.is_safe_session_id("../etc") is False
+    assert config.is_safe_session_id("") is False
+
+    # Valid IDs starting with alphanumeric characters
+    assert config.is_safe_session_id("sess123") is True
+    assert config.is_safe_session_id("0a1b2c3d4e5f") is True
+    assert config.is_safe_session_id("chat-session_1") is True
+    assert config.is_safe_session_id("Session-2026") is True

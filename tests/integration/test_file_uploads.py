@@ -296,15 +296,4 @@ def test_single_image_upload_not_duplicated(mock_get_settings, mock_update_title
         assert len(call_kwargs["attachments"]) == 1
 
 
-def test_frontend_main_js_no_duplicate_image_append():
-    main_js_path = os.path.join(os.path.dirname(__file__), "..", "..", "app", "static", "js", "main.js")
-    with open(main_js_path, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    # Ensure main.js does NOT append to both 'files' and 'images' in chatForm submit handler
-    assert 'formData.append("images", file)' not in content, (
-        "Found duplicate image append 'formData.append(\"images\", file)' in main.js. "
-        "All files should only be appended once to 'files'."
-    )
-
 

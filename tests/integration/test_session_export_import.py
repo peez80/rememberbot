@@ -484,3 +484,19 @@ def test_session_export_import_logging(tmp_path, caplog):
         logs = [rec.message for rec in caplog.records]
         assert any(f"exported session {session_id}" in msg or "export" in msg.lower() for msg in logs)
         assert any(f"imported session" in msg or "import" in msg.lower() for msg in logs)
+
+
+def test_import_empty_zero_byte_file_returns_400(tmp_path):
+    mock_auth()
+    with patch("app.storage.DATA_DIR", str(tmp_path)), patch("app.main.DATA_DIR", str(tmp_path)):
+        init_user_storage("testuser")
+        init_session_storage("testuser", "sess-empty")
+        session_file = tmp_path / "testuser" / "sessions" / "sess-empty" / "session.json"
+        session_file.write_text(json.dumps({"id": "sess-empty", "title": "Empty Import Target", "history": []}), encoding="utf-8")
+
+        # Sending an empty 0-byte file payload
+        files = {"file": ("empty.zip", b"", "application/zip")}
+        res = client.post("/api/sessions/sess-empty/import", files=files)
+        assert res.status_code == 400
+        assert "Leere Datei hochgeladen" in res.json()["detail"]
+

@@ -209,3 +209,99 @@ async def test_oauth_client_missing_config_raises():
 
     with pytest.raises(OAuthConfigurationError):
         OAuthClient(client_id="id", client_secret="")
+
+
+@pytest.mark.asyncio
+async def test_discovery_missing_urls_raises_configuration_error():
+    client = OAuthClient(client_id="id", client_secret="sec")
+    with pytest.raises(OAuthConfigurationError):
+        await client.get_discovery_config()
+
+
+@pytest.mark.asyncio
+async def test_discovery_all_endpoints_fail_raises_oauth_error(caplog):
+    transport = MockOAuthTransport(issuer_url="https://idp.example.com", simulate_status_code=404)
+    client = OAuthClient(
+        issuer_url="https://idp.example.com",
+        client_id="client",
+        client_secret="secret",
+        transport=transport,
+    )
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(OAuthError) as exc_info:
+            await client.get_discovery_config()
+
+    assert "OIDC Discovery fehlgeschlagen" in str(exc_info.value)
+    assert "vollständig fehlgeschlagen" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_exchange_code_network_and_payload_errors(caplog):
+    import httpx
+
+    # 1. Network error during token exchange
+    class FailingTransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request):
+            raise httpx.RequestError("Network connection reset", request=request)
+
+    client_failing = OAuthClient(
+        issuer_url="https://idp.example.com",
+        client_id="client",
+        client_secret="secret",
+        authorize_url="https://idp.example.com/auth",
+        token_url="https://idp.example.com/token",
+        userinfo_url="https://idp.example.com/userinfo",
+        transport=FailingTransport(),
+    )
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(OAuthError) as exc_info:
+            await client_failing.exchange_code_for_user(code="abc", redirect_uri="http://cb")
+        assert "network error" in str(exc_info.value).lower()
+
+    # 2. Token endpoint returns 200 but missing access_token
+    class MalformedTokenTransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request):
+            if "/token" in str(request.url):
+                return httpx.Response(200, json={"token_type": "bearer"}, request=request)
+            return httpx.Response(404, request=request)
+
+    client_malformed = OAuthClient(
+        issuer_url="https://idp.example.com",
+        client_id="client",
+        client_secret="secret",
+        token_url="https://idp.example.com/token",
+        userinfo_url="https://idp.example.com/userinfo",
+        transport=MalformedTokenTransport(),
+    )
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(OAuthError) as exc_info:
+            await client_malformed.exchange_code_for_user(code="abc", redirect_uri="http://cb")
+        assert "access_token" in str(exc_info.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_extract_username_nextcloud_ocs_and_invalid_claims():
+    client = OAuthClient(client_id="client", client_secret="secret")
+
+    # Nextcloud OCS structure
+    userinfo_nc = {
+        "ocs": {
+            "data": {
+                "id": "nc_admin"
+            }
+        }
+    }
+    assert client._extract_username(userinfo_nc) == "nc_admin"
+
+    # Missing claims entirely raises OAuthError
+    with pytest.raises(OAuthError) as exc_info:
+        client._extract_username({})
+    assert "no valid username claim" in str(exc_info.value).lower()
+
+    # Claim consisting only of dots/slashes sanitizes to empty string -> raises OAuthError
+    with pytest.raises(OAuthError) as exc_info:
+        client._extract_username({"preferred_username": "...///.."})
+    assert "username is invalid" in str(exc_info.value).lower()
