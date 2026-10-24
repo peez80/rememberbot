@@ -127,6 +127,12 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(self), camera=(self), microphone=()"
+    response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
+
+    is_https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "").lower() == "https"
+    from .core.config import COOKIE_SECURE
+    if is_https or COOKIE_SECURE:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     if "Content-Security-Policy" not in response.headers:
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "

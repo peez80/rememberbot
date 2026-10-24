@@ -136,6 +136,10 @@ async def delete_session_endpoint(session_id: str, username: str = Depends(get_c
         logger.warning(f"Invalid session_id in delete request: '{session_id}' by user '{username}'")
         raise HTTPException(status_code=400, detail="Ungültige Sitzungs-ID")
 
+    if supervisor.is_session_active(username, session_id):
+        logger.warning(f"Rejected deletion of actively running session {session_id} by user '{username}'")
+        raise HTTPException(status_code=400, detail="Session wird gerade verarbeitet")
+
     exists = await session_service.check_session_exists(username, session_id)
     if not exists:
         logger.warning(f"Delete requested for non-existent session {session_id} by user '{username}'")

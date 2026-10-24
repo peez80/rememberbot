@@ -408,6 +408,11 @@ class SessionService:
                         logger.warning(f"ZipSlip attempt or invalid path in archive: '{info.filename}' (user '{username}')")
                         raise ValueError(f"Ungültiger Pfad im ZIP-Archiv: {info.filename}")
 
+                    # Check for symlink entries: UNIX file attribute mode 0o120000 (S_IFLNK)
+                    if (info.external_attr >> 16) & 0o170000 == 0o120000:
+                        logger.warning(f"Symlink rejected in zip archive: '{info.filename}' (user '{username}')")
+                        raise ValueError(f"Symlinks im ZIP-Archiv sind aus Sicherheitsgründen nicht erlaubt: {info.filename}")
+
                 session_json_info = None
                 prefix = ""
                 for info in infolist:
@@ -460,8 +465,14 @@ class SessionService:
                         clean_sub = os.path.normpath(sub_file).replace("\\", "/")
                         if clean_sub and clean_sub != "." and not clean_sub.startswith("..") and ".." not in clean_sub.split("/"):
                             dest_path = os.path.abspath(os.path.join(target_uploads_dir, clean_sub))
+                            real_dest_dir = os.path.realpath(target_uploads_dir)
                             if dest_path.startswith(os.path.abspath(target_uploads_dir) + os.sep) or dest_path == os.path.abspath(target_uploads_dir):
                                 os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                                if os.path.islink(dest_path):
+                                    os.unlink(dest_path)
+                                real_dest_parent = os.path.realpath(os.path.dirname(dest_path))
+                                if not (real_dest_parent.startswith(real_dest_dir + os.sep) or real_dest_parent == real_dest_dir):
+                                    raise ValueError(f"Ungültiger Pfad im ZIP-Archiv: {info.filename}")
                                 with zf.open(info) as src, open(dest_path, "wb") as dst:
                                     while chunk := src.read(64 * 1024):
                                         extracted_uncompressed_bytes += len(chunk)
@@ -475,8 +486,14 @@ class SessionService:
                         clean_sub = os.path.normpath(sub_file).replace("\\", "/")
                         if clean_sub and clean_sub != "." and not clean_sub.startswith("..") and ".." not in clean_sub.split("/"):
                             dest_path = os.path.abspath(os.path.join(target_data_dir, clean_sub))
+                            real_dest_dir = os.path.realpath(target_data_dir)
                             if dest_path.startswith(os.path.abspath(target_data_dir) + os.sep) or dest_path == os.path.abspath(target_data_dir):
                                 os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                                if os.path.islink(dest_path):
+                                    os.unlink(dest_path)
+                                real_dest_parent = os.path.realpath(os.path.dirname(dest_path))
+                                if not (real_dest_parent.startswith(real_dest_dir + os.sep) or real_dest_parent == real_dest_dir):
+                                    raise ValueError(f"Ungültiger Pfad im ZIP-Archiv: {info.filename}")
                                 with zf.open(info) as src, open(dest_path, "wb") as dst:
                                     while chunk := src.read(64 * 1024):
                                         extracted_uncompressed_bytes += len(chunk)
@@ -487,6 +504,8 @@ class SessionService:
                                 raise ValueError(f"Ungültiger Pfad im ZIP-Archiv: {info.filename}")
                     elif rel_name == "icon.svg":
                         dest_path = os.path.join(target_dir, "icon.svg")
+                        if os.path.islink(dest_path):
+                            os.unlink(dest_path)
                         raw_svg = zf.read(info)
                         extracted_uncompressed_bytes += len(raw_svg)
                         if extracted_uncompressed_bytes > MAX_ZIP_UNCOMPRESSED_BYTES:
@@ -658,6 +677,10 @@ class SessionService:
             if not ext and is_image:
                 ext = ".jpg"
                 safe_filename += ext
+
+            if ext == ".svg":
+                contents = sanitize_svg(contents).encode("utf-8")
+                file_size = len(contents)
 
             unique_filename = f"{uuid.uuid4().hex[:8]}_{safe_filename}"
             saved_path = os.path.join(user_uploads_dir, unique_filename)

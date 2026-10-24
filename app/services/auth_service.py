@@ -80,14 +80,23 @@ class AuthService:
         current_time = time.time()
         rate_key = f"{client_ip}:{username}"
 
-        self.failed_login_attempts[rate_key] = [
-            t for t in self.failed_login_attempts[rate_key] if current_time - t < LOGIN_RATE_WINDOW_SECONDS
+        attempts_rk = [
+            t for t in self.failed_login_attempts.get(rate_key, []) if current_time - t < LOGIN_RATE_WINDOW_SECONDS
         ]
-        self.failed_login_attempts[client_ip] = [
-            t for t in self.failed_login_attempts[client_ip] if current_time - t < LOGIN_RATE_WINDOW_SECONDS
-        ]
+        if attempts_rk:
+            self.failed_login_attempts[rate_key] = attempts_rk
+        elif rate_key in self.failed_login_attempts:
+            del self.failed_login_attempts[rate_key]
 
-        if len(self.failed_login_attempts[rate_key]) >= MAX_LOGIN_ATTEMPTS or len(self.failed_login_attempts[client_ip]) >= MAX_LOGIN_ATTEMPTS:
+        attempts_ip = [
+            t for t in self.failed_login_attempts.get(client_ip, []) if current_time - t < LOGIN_RATE_WINDOW_SECONDS
+        ]
+        if attempts_ip:
+            self.failed_login_attempts[client_ip] = attempts_ip
+        elif client_ip in self.failed_login_attempts:
+            del self.failed_login_attempts[client_ip]
+
+        if len(attempts_rk) >= MAX_LOGIN_ATTEMPTS or len(attempts_ip) >= MAX_LOGIN_ATTEMPTS:
             logger.warning(f"Rate limit exceeded for login attempt (user: '{username}', IP: {client_ip})")
             return False
         return True

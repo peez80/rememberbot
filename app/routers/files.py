@@ -28,8 +28,11 @@ async def download_file(username: str, session_id: str, file_path: str, current_
     clean_file_path = os.path.normpath(file_path.lstrip("/\\"))
     full_path = os.path.abspath(os.path.join(base_dir, clean_file_path))
 
-    if not (full_path.startswith(base_dir + os.sep) or full_path == base_dir) or os.path.commonpath([base_dir, full_path]) != base_dir:
-        logger.warning(f"Potential path traversal attempt detected in data download: '{file_path}' for session {session_id} by user '{username}'")
+    real_base_dir = os.path.realpath(base_dir)
+    real_full_path = os.path.realpath(full_path)
+
+    if not (real_full_path.startswith(real_base_dir + os.sep) or real_full_path == real_base_dir) or os.path.commonpath([real_base_dir, real_full_path]) != real_base_dir:
+        logger.warning(f"Potential path traversal or symlink escape detected in data download: '{file_path}' for session {session_id} by user '{username}'")
         raise HTTPException(status_code=400, detail="Invalid path")
 
     if os.path.isfile(full_path):

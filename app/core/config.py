@@ -375,8 +375,8 @@ def resolve_session_model_and_effort(model: str | None, thinking_effort: str | N
     return eff_model, allowed_efforts[0] if allowed_efforts else None
 
 
-# Validation pattern for session IDs: alphanumeric, underscores, and hyphens (1-64 chars)
-SESSION_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
+# Validation pattern for session IDs: starts with alphanumeric, followed by underscores, and hyphens (1-64 chars)
+SESSION_ID_PATTERN = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$')
 
 def is_safe_session_id(session_id: str | None) -> bool:
     """
