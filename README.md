@@ -26,7 +26,7 @@ I loved the agentic behavior of the `gemini` / `antigravity` CLI, and I wanted t
 - **Modular Authentication & OpenID Connect SSO**: Support for simple file-based authentication (`users.json`) or enterprise Single Sign-On via standard OpenID Connect / OAuth 2.0 (Nextcloud, Keycloak, Authentik, Zitadel, GitLab, Google) hardened with PKCE (RFC 7636) and CSRF protection.
 - **Hardened Security Architecture**: Defense-in-depth security including strict session ID validation against path traversal, timing-attack-resistant authentication, sandboxed Content Security Policy (CSP) and nosniff headers for user uploads and generated files, streaming Zip-Bomb and DoS defense, and DOMPurify with Subresource Integrity (SRI).
 - **Smart Parsing**: Powered by Google's Gemini models via the `antigravity-cli`, extracting structured data automatically.
-- **Responsive Web App**: Built with vanilla HTML/JS/CSS for a fast, responsive user experience.
+- **Responsive Web App & Mobile Navigation**: Built with vanilla HTML/JS/CSS for a fast, responsive user experience. On smartphones, easily open the sidebar with a swipe from left to right anywhere in the chat, or close it by swiping right to left or tapping the darkened backdrop.
 
 ## Tech Stack
 - **Backend**: Python, FastAPI, Pillow

@@ -8,7 +8,7 @@ Die Anwendung ist ein generischer, agentischer KI-Chat mit persistentem Gedächt
 ### 2.1 Chat-Interface
 - Die zentrale Benutzeroberfläche der Anwendung ist ein Chat.
 - Der Benutzer kann hier wie in einer Messenger-App Eingaben tätigen und sieht den Verlauf.
-- **Responsive Layout:** Die Chat-Oberfläche muss sowohl auf Desktop-Rechnern als auch auf mobilen Endgeräten (Smartphones, Tablets) optimal dargestellt werden und nutzbar sein.
+- **Responsive Layout & Mobile Navigation:** Die Chat-Oberfläche muss sowohl auf Desktop-Rechnern als auch auf mobilen Endgeräten (Smartphones, Tablets) optimal dargestellt werden und nutzbar sein. Auf Smartphones lässt sich die Chat-Liste (Sidebar) per Menü-Icon sowie intuitiv per Wischgeste (Swipe von links nach rechts anywhere im Chat) öffnen und per Swipe von rechts nach links oder Tap auf das abgedunkelte Hintergrund-Overlay (Backdrop) wieder schließen.
 
 ### 2.2 Dateneingabe, Logging und Datei-Uploads
 - **Texteingabe:** Der Benutzer kann in natürlicher Sprache beliebige Informationen eingeben, die der Agent verarbeiten und speichern soll.

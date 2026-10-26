@@ -743,3 +743,298 @@ async def test_icon_updates_automatically_after_title_change_e2e():
         assert status_polls >= 2
 
         await browser.close()
+
+
+async def _perform_touch_swipe(page, start_x, start_y, end_x, end_y, selector="body"):
+    """Helper to dispatch synthetic touchstart and touchend events."""
+    await page.evaluate("""({ startX, startY, endX, endY, sel }) => {
+        const target = document.querySelector(sel) || document.body;
+        const touchId = Date.now();
+        const startTouch = new Touch({
+            identifier: touchId,
+            target: target,
+            clientX: startX,
+            clientY: startY,
+            pageX: startX,
+            pageY: startY,
+            screenX: startX,
+            screenY: startY
+        });
+        target.dispatchEvent(new TouchEvent('touchstart', {
+            touches: [startTouch],
+            targetTouches: [startTouch],
+            changedTouches: [startTouch],
+            bubbles: true,
+            cancelable: true
+        }));
+
+        const endTouch = new Touch({
+            identifier: touchId,
+            target: target,
+            clientX: endX,
+            clientY: endY,
+            pageX: endX,
+            pageY: endY,
+            screenX: endX,
+            screenY: endY
+        });
+        target.dispatchEvent(new TouchEvent('touchend', {
+            touches: [],
+            targetTouches: [],
+            changedTouches: [endTouch],
+            bubbles: true,
+            cancelable: true
+        }));
+    }""", {"startX": start_x, "startY": start_y, "endX": end_x, "endY": end_y, "sel": selector})
+
+
+@pytest.mark.asyncio
+async def test_mobile_swipe_open_and_close_e2e():
+    """Verify swiping left-to-right anywhere in chat opens sidebar and backdrop, and swiping right-to-left closes it."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 375, "height": 667}, has_touch=True)
+
+        await page.route("**/api/auth/status", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"authenticated": true, "username": "testuser"}'
+        ))
+        await page.route("**/api/sessions", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='[{"id": "sess-mobile-swipe", "title": "Mobile Swipe Chat", "created_at": "2026-01-01T00:00:00Z", "has_icon": false}]'
+        ))
+        await page.route("**/api/sessions/*/settings", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"prompt": "", "include_gps": false}'
+        ))
+        await page.route("**/api/sessions/*/history", lambda route: route.fulfill(
+            status=200,
+            headers={"X-Is-Processing": "false"},
+            content_type="application/json",
+            body='[{"role": "assistant", "content": "Hallo vom Assistenten!"}]'
+        ))
+
+        await page.goto(f"http://127.0.0.1:{SERVER_PORT}")
+        await page.evaluate("""() => {
+            const modal = document.getElementById('auth-modal');
+            if (modal) modal.remove();
+        }""")
+
+        sidebar = page.locator("#sidebar")
+        backdrop = page.locator("#sidebar-backdrop")
+
+        # Initially closed
+        await expect(sidebar).not_to_have_class(re.compile(r"\bopen\b"))
+        await expect(backdrop).not_to_have_class(re.compile(r"\bactive\b"))
+
+        # Swipe left-to-right anywhere in the chat container (deltaX = +170px)
+        await _perform_touch_swipe(page, start_x=50, start_y=300, end_x=220, end_y=305, selector="#chat-container")
+
+        # Sidebar must be open and backdrop active
+        await expect(sidebar).to_have_class(re.compile(r"\bopen\b"))
+        await expect(backdrop).to_have_class(re.compile(r"\bactive\b"))
+
+        # Swipe right-to-left anywhere to close (deltaX = -170px)
+        await _perform_touch_swipe(page, start_x=250, start_y=300, end_x=80, end_y=305, selector="#sidebar")
+
+        # Sidebar must be closed and backdrop inactive
+        await expect(sidebar).not_to_have_class(re.compile(r"\bopen\b"))
+        await expect(backdrop).not_to_have_class(re.compile(r"\bactive\b"))
+
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_mobile_backdrop_click_closes_sidebar_e2e():
+    """Verify tapping on the mobile backdrop closes the open sidebar."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 375, "height": 667}, has_touch=True)
+
+        await page.route("**/api/auth/status", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"authenticated": true, "username": "testuser"}'
+        ))
+        await page.route("**/api/sessions", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='[{"id": "sess-mobile-bd", "title": "Backdrop Chat", "created_at": "2026-01-01T00:00:00Z", "has_icon": false}]'
+        ))
+        await page.route("**/api/sessions/*/settings", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"prompt": "", "include_gps": false}'
+        ))
+        await page.route("**/api/sessions/*/history", lambda route: route.fulfill(
+            status=200,
+            headers={"X-Is-Processing": "false"},
+            content_type="application/json",
+            body='[]'
+        ))
+
+        await page.goto(f"http://127.0.0.1:{SERVER_PORT}")
+        await page.evaluate("""() => {
+            const modal = document.getElementById('auth-modal');
+            if (modal) modal.remove();
+        }""")
+
+        sidebar = page.locator("#sidebar")
+        backdrop = page.locator("#sidebar-backdrop")
+        menu_btn = page.locator("#menu-btn")
+
+        # Open sidebar via menu button
+        await menu_btn.click()
+        await expect(sidebar).to_have_class(re.compile(r"\bopen\b"))
+        await expect(backdrop).to_have_class(re.compile(r"\bactive\b"))
+
+        # Click backdrop
+        await backdrop.click(force=True)
+        await expect(sidebar).not_to_have_class(re.compile(r"\bopen\b"))
+        await expect(backdrop).not_to_have_class(re.compile(r"\bactive\b"))
+
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_mobile_vertical_scroll_does_not_open_sidebar_e2e():
+    """Verify vertical scrolling inside the chat does not accidentally trigger opening the sidebar."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 375, "height": 667}, has_touch=True)
+
+        await page.route("**/api/auth/status", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"authenticated": true, "username": "testuser"}'
+        ))
+        await page.route("**/api/sessions", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='[{"id": "sess-scroll", "title": "Scroll Chat", "created_at": "2026-01-01T00:00:00Z", "has_icon": false}]'
+        ))
+        await page.route("**/api/sessions/*/settings", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"prompt": "", "include_gps": false}'
+        ))
+        await page.route("**/api/sessions/*/history", lambda route: route.fulfill(
+            status=200,
+            headers={"X-Is-Processing": "false"},
+            content_type="application/json",
+            body='[]'
+        ))
+
+        await page.goto(f"http://127.0.0.1:{SERVER_PORT}")
+        await page.evaluate("""() => {
+            const modal = document.getElementById('auth-modal');
+            if (modal) modal.remove();
+        }""")
+
+        sidebar = page.locator("#sidebar")
+        await expect(sidebar).not_to_have_class(re.compile(r"\bopen\b"))
+
+        # Vertical movement (deltaX = 10px, deltaY = -250px)
+        await _perform_touch_swipe(page, start_x=150, start_y=400, end_x=160, end_y=150, selector="#chat-container")
+
+        # Sidebar must remain closed
+        await expect(sidebar).not_to_have_class(re.compile(r"\bopen\b"))
+
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_swipe_ignored_inside_textarea_and_modal_e2e():
+    """Verify swipe gestures starting in input areas or when a modal is open are ignored."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 375, "height": 667}, has_touch=True)
+
+        await page.route("**/api/auth/status", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"authenticated": true, "username": "testuser"}'
+        ))
+        await page.route("**/api/sessions", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='[{"id": "sess-ignore", "title": "Ignore Chat", "created_at": "2026-01-01T00:00:00Z", "has_icon": false}]'
+        ))
+        await page.route("**/api/sessions/*/settings", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"prompt": "", "include_gps": false}'
+        ))
+        await page.route("**/api/sessions/*/history", lambda route: route.fulfill(
+            status=200,
+            headers={"X-Is-Processing": "false"},
+            content_type="application/json",
+            body='[]'
+        ))
+
+        await page.goto(f"http://127.0.0.1:{SERVER_PORT}")
+        await page.evaluate("""() => {
+            const modal = document.getElementById('auth-modal');
+            if (modal) modal.remove();
+        }""")
+
+        sidebar = page.locator("#sidebar")
+
+        # 1. Swipe originating from #message-input
+        await _perform_touch_swipe(page, start_x=100, start_y=640, end_x=260, end_y=640, selector="#message-input")
+        await expect(sidebar).not_to_have_class(re.compile(r"\bopen\b"))
+
+        # 2. Open Settings modal and swipe inside modal
+        await page.locator("#system-prompt-btn").click()
+        await expect(page.locator("#system-prompt-modal")).to_be_visible()
+
+        await _perform_touch_swipe(page, start_x=50, start_y=300, end_x=250, end_y=300, selector="#system-prompt-modal")
+        await expect(sidebar).not_to_have_class(re.compile(r"\bopen\b"))
+
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_desktop_ignores_swipe_and_hides_backdrop_e2e():
+    """Verify on desktop viewport, the backdrop is completely hidden and swipe does not toggle classes."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1280, "height": 800}, has_touch=True)
+
+        await page.route("**/api/auth/status", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"authenticated": true, "username": "testuser"}'
+        ))
+        await page.route("**/api/sessions", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='[{"id": "sess-desk", "title": "Desktop Chat", "created_at": "2026-01-01T00:00:00Z", "has_icon": false}]'
+        ))
+        await page.route("**/api/sessions/*/settings", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"prompt": "", "include_gps": false}'
+        ))
+        await page.route("**/api/sessions/*/history", lambda route: route.fulfill(
+            status=200,
+            headers={"X-Is-Processing": "false"},
+            content_type="application/json",
+            body='[]'
+        ))
+
+        await page.goto(f"http://127.0.0.1:{SERVER_PORT}")
+        await page.evaluate("""() => {
+            const modal = document.getElementById('auth-modal');
+            if (modal) modal.remove();
+        }""")
+
+        backdrop = page.locator("#sidebar-backdrop")
+        # In CSS, .sidebar-backdrop must have display: none on desktop
+        await expect(backdrop).not_to_be_visible()
+
+        await browser.close()
+

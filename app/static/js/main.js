@@ -26,6 +26,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const contextWarning = document.getElementById("context-warning");
 
     const sidebar = document.getElementById("sidebar");
+    const sidebarBackdrop = document.getElementById("sidebar-backdrop");
     const menuBtn = document.getElementById("menu-btn");
     const closeSidebarBtn = document.getElementById("close-sidebar-btn");
     const newChatBtn = document.getElementById("new-chat-btn");
@@ -139,9 +140,11 @@ document.addEventListener("DOMContentLoaded", () => {
     };
     api.setAuthErrorHandler(handleAuthError);
 
-    // Sidebar toggling
+    // Sidebar toggling and gestures
     if (menuBtn) menuBtn.addEventListener("click", sidebarView.toggleSidebar);
     if (closeSidebarBtn) closeSidebarBtn.addEventListener("click", sidebarView.toggleSidebar);
+    if (sidebarBackdrop) sidebarBackdrop.addEventListener("click", sidebarView.closeSidebar);
+    sidebarView.initSidebarSwipeGestures();
 
     // Chat scroll listener
     if (chatContainer) {
@@ -368,8 +371,8 @@ document.addEventListener("DOMContentLoaded", () => {
         if (contextWarning) contextWarning.style.display = "none";
         sidebarView.updateActiveSessionHighlight(sessionId);
 
-        if (window.innerWidth <= 768 && sidebar) {
-            sidebar.classList.remove("open");
+        if (window.innerWidth <= 768) {
+            sidebarView.closeSidebar();
         }
 
         if (systemPromptBtn) systemPromptBtn.disabled = false;

@@ -976,6 +976,11 @@ body {
     margin-bottom: 0.5rem;
 }
 
+/* Sidebar Backdrop */
+.sidebar-backdrop {
+    display: none;
+}
+
 /* Responsive */
 .mobile-only {
     display: none;
@@ -997,6 +1002,22 @@ body {
     
     .sidebar.open {
         transform: translateX(0);
+    }
+    
+    .sidebar-backdrop {
+        display: block;
+        position: fixed;
+        inset: 0;
+        background-color: rgba(0, 0, 0, 0.5);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.3s ease;
+        z-index: 15;
+    }
+    
+    .sidebar-backdrop.active {
+        opacity: 1;
+        pointer-events: auto;
     }
     
     .input-area {
