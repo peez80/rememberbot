@@ -7,6 +7,7 @@ export const state = {
     currentSessionId: localStorage.getItem("currentSessionId"),
     currentSessionGpsEnabled: false,
     activeSubmittingSessionId: null,
+    activeSubmissionsBySession: new Map(),
     activeStreamAbortController: null,
     streamWasHidden: false,
     recoveryWakeListeners: new Set(),

@@ -1,3 +1,6 @@
+import os
+import json
+import asyncio
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
@@ -274,6 +277,117 @@ async def test_chat_service_stream_finalize_without_done_event(chat_service):
         history = await chat_service.session_service.get_session_history(username, session_id)
         assert len(history) == 2
         assert history[1]["text"] == "Partial output without done event"
+
+
+@pytest.mark.asyncio
+async def test_chat_service_sequential_queue_preserves_context_and_order(chat_service):
+    username = "alice"
+    session_id = await chat_service.session_service.create_session(username, "Queue Chat")
+
+    calls = []
+    async def mock_stream(*args, **kwargs):
+        new_msg = kwargs.get("new_message")
+        ctx = kwargs.get("context_messages") or []
+        calls.append({"msg": new_msg, "ctx_len": len(ctx), "conv_id": kwargs.get("conversation_id")})
+        # Simulate slight processing delay so overlapping calls wait
+        await asyncio.sleep(0.05)
+        yield {"type": "init", "conversation_id": "conv-test-seq"}
+        yield {"type": "delta", "text": f"Antwort auf {new_msg}"}
+        yield {"type": "done", "reply": f"Antwort auf {new_msg}"}
+
+    with patch.object(chat_service._agy, "stream_message", side_effect=mock_stream), \
+         patch.object(chat_service._agy, "conversation_exists", return_value=True):
+        # Fire 3 chat generators concurrently
+        async def run_turn(text):
+            gen = chat_service.stream_chat_generator(username=username, session_id=session_id, message=text)
+            return [ev async for ev in gen]
+
+        t1, t2, t3 = await asyncio.gather(
+            run_turn("Nachricht 1"),
+            run_turn("Nachricht 2"),
+            run_turn("Nachricht 3")
+        )
+
+    # All three turns must have completed
+    assert len(calls) == 3
+    # Turn 1: 0 prior messages
+    assert calls[0]["msg"] == "Nachricht 1"
+    assert calls[0]["ctx_len"] == 0
+
+    # Turn 2: must have Turn 1 (User 1 + AI 1) in context
+    assert calls[1]["msg"] == "Nachricht 2"
+    assert calls[1]["ctx_len"] == 2
+    assert calls[1]["conv_id"] == "conv-test-seq"
+
+    # Turn 3: must have Turn 1 + Turn 2 (User 1 + AI 1 + User 2 + AI 2) in context
+    assert calls[2]["msg"] == "Nachricht 3"
+    assert calls[2]["ctx_len"] == 4
+    assert calls[2]["conv_id"] == "conv-test-seq"
+
+    # Verify final session.json history has alternating [User 1, AI 1, User 2, AI 2, User 3, AI 3]
+    history = await chat_service.session_service.get_session_history(username, session_id)
+    assert len(history) == 6
+    assert history[0]["text"] == "Nachricht 1" and history[0]["is_user"] is True
+    assert history[1]["text"] == "Antwort auf Nachricht 1" and history[1]["is_user"] is False
+    assert history[2]["text"] == "Nachricht 2" and history[2]["is_user"] is True
+    assert history[3]["text"] == "Antwort auf Nachricht 2" and history[3]["is_user"] is False
+    assert history[4]["text"] == "Nachricht 3" and history[4]["is_user"] is True
+    assert history[5]["text"] == "Antwort auf Nachricht 3" and history[5]["is_user"] is False
+
+
+@pytest.mark.asyncio
+async def test_chat_service_cancel_queued_message_skips_execution(chat_service):
+    username = "alice"
+    session_id = await chat_service.session_service.create_session(username, "Cancel Queue Chat")
+
+    turn1_started = asyncio.Event()
+    turn1_can_finish = asyncio.Event()
+    calls = []
+
+    async def mock_stream(*args, **kwargs):
+        msg = kwargs.get("new_message")
+        calls.append(msg)
+        if msg == "Msg 1":
+            turn1_started.set()
+            await turn1_can_finish.wait()
+        yield {"type": "done", "reply": f"Reply to {msg}"}
+
+    with patch.object(chat_service._agy, "stream_message", side_effect=mock_stream):
+        # Start turn 1
+        t1_gen = chat_service.stream_chat_generator(username=username, session_id=session_id, message="Msg 1")
+        t1_task = asyncio.create_task(t1_gen.__anext__())
+        await turn1_started.wait()
+
+        # Enqueue turn 2 with a specific message_id
+        t2_gen = chat_service.stream_chat_generator(username=username, session_id=session_id, message="Msg 2", message_id="msg-to-cancel")
+        # Read initial event (which should be queued)
+        t2_first_event = await t2_gen.__anext__()
+        assert "queued" in t2_first_event
+
+        # Cancel turn 2 while turn 1 is still processing
+        cancelled = await chat_service.cancel_queued_message(username, session_id, "msg-to-cancel")
+        assert cancelled is True
+
+        # Let turn 1 complete
+        turn1_can_finish.set()
+        await t1_task
+        # Finish iterating t1
+        async for _ in t1_gen:
+            pass
+
+        # Try iterating t2 - it should cleanly terminate without calling agy
+        async for _ in t2_gen:
+            pass
+
+        # agy was ONLY called for Msg 1, NOT for Msg 2
+        assert calls == ["Msg 1"]
+
+        # session.json history contains only Msg 1 and Reply to Msg 1
+        history = await chat_service.session_service.get_session_history(username, session_id)
+        assert len(history) == 2
+        assert history[0]["text"] == "Msg 1"
+        assert history[1]["text"] == "Reply to Msg 1"
+
 
 
 

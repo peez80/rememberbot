@@ -1,9 +1,11 @@
 import os
 import json
+import uuid
 import asyncio
 import logging
+from collections import defaultdict
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional, AsyncGenerator, Tuple
+from typing import List, Dict, Any, Optional, AsyncGenerator, Tuple, Set
 
 from app.core.formatters import format_local_links
 from app.core.tasks import supervisor, fire_and_forget
@@ -26,6 +28,26 @@ class ChatService:
         self.storage_service = storage_service
         self.session_service = session_service
         self.agy_service = agy_service
+        self._session_turn_locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._active_or_queued_count: Dict[str, int] = defaultdict(int)
+        self._cancelled_messages: Dict[str, Set[str]] = defaultdict(set)
+        self._cancel_events: Dict[Tuple[str, str], asyncio.Event] = {}
+
+    def get_queued_count(self, session_id: str) -> int:
+        return max(0, self._active_or_queued_count[session_id] - 1)
+
+    async def cancel_queued_message(self, username: str, session_id: str, message_id: str) -> bool:
+        # Remove from persistent session storage
+        removed = await self.session_service.remove_queued_message(username, session_id, message_id)
+        if removed:
+            self._cancelled_messages[session_id].add(message_id)
+            cancel_ev = self._cancel_events.get((session_id, message_id))
+            if cancel_ev:
+                cancel_ev.set()
+            logger.info("Removed queued message %s from session %s for user '%s'", message_id, session_id, username)
+            return True
+
+        return False
 
     @property
     def _agy(self):
@@ -92,7 +114,10 @@ class ChatService:
         images_data: list = None,
         files_data: list = None,
         attachments: list = None,
-        display_msg: str = None
+        display_msg: str = None,
+        message_id: str = None,
+        already_saved: bool = False,
+        is_queued: bool = False
     ) -> dict:
         valid_uploads = valid_uploads or []
         image_paths = image_paths or []
@@ -106,23 +131,39 @@ class ChatService:
             num_docs = sum(1 for f in files_data if not f.get("is_image"))
             display_msg = self.format_display_message(message, num_images, num_docs)
 
-        # Get existing history
-        history = await self.session_service.get_session_history(username, session_id)
+        if not message_id:
+            message_id = uuid.uuid4().hex
+
+        # Save user message if not already saved
+        if not already_saved:
+            user_msg_data = {
+                "id": message_id,
+                "text": display_msg,
+                "is_user": True,
+                "image_urls": image_urls,
+                "images": images_data if images_data else None,
+                "files": files_data if files_data else None,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            if is_queued:
+                user_msg_data["status"] = "queued"
+            await self.session_service.save_session_message(username, session_id, user_msg_data)
+
+        # Get existing history to construct context for agy
+        full_history = await self.session_service.get_session_history(username, session_id)
+        if message_id:
+            target_idx = next((i for i, m in enumerate(full_history) if m.get("id") == message_id), len(full_history))
+            history = [m for m in full_history[:target_idx] if m.get("status") != "queued"]
+        elif is_queued:
+            history = [m for m in full_history if m.get("status") != "queued"]
+        else:
+            history = [m for m in full_history[:-1] if m.get("status") != "queued"]
+
         is_first_message = len(history) == 0
 
-        # Save user message immediately
-        user_msg_data = {
-            "text": display_msg,
-            "is_user": True,
-            "image_urls": image_urls,
-            "images": images_data if images_data else None,
-            "files": files_data if files_data else None,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
-        await self.session_service.save_session_message(username, session_id, user_msg_data)
-
         # Auto-title on first message
-        await self._handle_first_message_title(username, session_id, is_first_message, message, valid_uploads)
+        if not is_queued:
+            await self._handle_first_message_title(username, session_id, is_first_message, message, valid_uploads)
 
         # Settings
         settings = await self.session_service.get_session_settings(username, session_id)
@@ -203,48 +244,108 @@ class ChatService:
         images_data: list = None,
         files_data: list = None,
         attachments: list = None,
-        display_msg: str = None
+        display_msg: str = None,
+        message_id: str = None
     ) -> dict:
-        prep = await self._prepare_chat_turn(
-            username=username,
-            session_id=session_id,
-            message=message,
-            location=location,
-            valid_uploads=valid_uploads,
-            image_paths=image_paths,
-            image_urls=image_urls,
-            images_data=images_data,
-            files_data=files_data,
-            attachments=attachments,
-            display_msg=display_msg
-        )
+        if not message_id:
+            message_id = uuid.uuid4().hex
 
-        result = await self._agy.process_message(
-            context_messages=prep["history"],
-            new_message=message,
-            image_paths=image_paths or [],
-            attachments=attachments or [],
-            system_prompt=prep["system_prompt"],
-            cwd=prep["cwd"],
-            conversation_id=prep["conversation_id"],
-            model=prep["model"],
-            thinking_effort=prep["thinking_effort"]
-        )
+        turn_lock = self._session_turn_locks[session_id]
+        is_queued = self._active_or_queued_count[session_id] > 0
+        self._active_or_queued_count[session_id] += 1
+        supervisor.register_session(username, session_id, turn_id=message_id)
 
-        finalized = await self._finalize_chat_turn(
-            username=username,
-            session_id=session_id,
-            raw_reply=result.get("reply", ""),
-            cwd=prep["cwd"],
-            is_first_message=prep["is_first_message"],
-            user_message=message
-        )
+        try:
+            if is_queued:
+                await self._prepare_chat_turn(
+                    username=username,
+                    session_id=session_id,
+                    message=message,
+                    location=location,
+                    valid_uploads=valid_uploads,
+                    image_paths=image_paths,
+                    image_urls=image_urls,
+                    images_data=images_data,
+                    files_data=files_data,
+                    attachments=attachments,
+                    display_msg=display_msg,
+                    message_id=message_id,
+                    already_saved=False,
+                    is_queued=True
+                )
+                await turn_lock.acquire()
+                if message_id in self._cancelled_messages[session_id]:
+                    return {"reply": "", "context_truncated": False, "timestamp": datetime.now(timezone.utc).isoformat()}
+                await self.session_service.activate_queued_message(username, session_id, message_id)
+                prep = await self._prepare_chat_turn(
+                    username=username,
+                    session_id=session_id,
+                    message=message,
+                    location=location,
+                    valid_uploads=valid_uploads,
+                    image_paths=image_paths,
+                    image_urls=image_urls,
+                    images_data=images_data,
+                    files_data=files_data,
+                    attachments=attachments,
+                    display_msg=display_msg,
+                    message_id=message_id,
+                    already_saved=True,
+                    is_queued=False
+                )
+            else:
+                await turn_lock.acquire()
+                prep = await self._prepare_chat_turn(
+                    username=username,
+                    session_id=session_id,
+                    message=message,
+                    location=location,
+                    valid_uploads=valid_uploads,
+                    image_paths=image_paths,
+                    image_urls=image_urls,
+                    images_data=images_data,
+                    files_data=files_data,
+                    attachments=attachments,
+                    display_msg=display_msg,
+                    message_id=message_id,
+                    already_saved=False,
+                    is_queued=False
+                )
 
-        return {
-            "reply": finalized["reply"],
-            "context_truncated": result.get("context_truncated", False),
-            "timestamp": finalized["timestamp"]
-        }
+            result = await self._agy.process_message(
+                context_messages=prep["history"],
+                new_message=message,
+                image_paths=image_paths or [],
+                attachments=attachments or [],
+                system_prompt=prep["system_prompt"],
+                cwd=prep["cwd"],
+                conversation_id=prep["conversation_id"],
+                model=prep["model"],
+                thinking_effort=prep["thinking_effort"]
+            )
+
+            finalized = await self._finalize_chat_turn(
+                username=username,
+                session_id=session_id,
+                raw_reply=result.get("reply", ""),
+                cwd=prep["cwd"],
+                is_first_message=prep["is_first_message"],
+                user_message=message
+            )
+
+            return {
+                "reply": finalized["reply"],
+                "context_truncated": result.get("context_truncated", False),
+                "timestamp": finalized["timestamp"]
+            }
+        finally:
+            if turn_lock.locked():
+                try:
+                    turn_lock.release()
+                except RuntimeError:
+                    pass
+            self._active_or_queued_count[session_id] = max(0, self._active_or_queued_count[session_id] - 1)
+            supervisor.unregister_session(username, session_id, turn_id=message_id)
 
     async def stream_chat_generator(
         self,
@@ -258,38 +359,99 @@ class ChatService:
         images_data: list = None,
         files_data: list = None,
         attachments: list = None,
-        display_msg: str = None
+        display_msg: str = None,
+        message_id: str = None
     ) -> AsyncGenerator[str, None]:
-        supervisor.register_session(username, session_id)
-        prep_task = supervisor.create_task(
-            self._prepare_chat_turn(
-                username=username,
-                session_id=session_id,
-                message=message,
-                location=location,
-                valid_uploads=valid_uploads,
-                image_paths=image_paths,
-                image_urls=image_urls,
-                images_data=images_data,
-                files_data=files_data,
-                attachments=attachments,
-                display_msg=display_msg
-            )
-        )
+        if not message_id:
+            message_id = uuid.uuid4().hex
+
+        turn_lock = self._session_turn_locks[session_id]
+        lock_acquire_task = asyncio.create_task(turn_lock.acquire())
+        cancel_event = asyncio.Event()
+        self._cancel_events[(session_id, message_id)] = cancel_event
+
+        is_queued = self._active_or_queued_count[session_id] > 0
+        self._active_or_queued_count[session_id] += 1
+
+        supervisor.register_session(username, session_id, turn_id=message_id)
 
         queue = asyncio.Queue()
+
+        # Save user message immediately in persistent history in strict arrival order
+        prep_task = supervisor.create_task(self._prepare_chat_turn(
+            username=username,
+            session_id=session_id,
+            message=message,
+            location=location,
+            valid_uploads=valid_uploads,
+            image_paths=image_paths,
+            image_urls=image_urls,
+            images_data=images_data,
+            files_data=files_data,
+            attachments=attachments,
+            display_msg=display_msg,
+            message_id=message_id,
+            already_saved=False,
+            is_queued=is_queued
+        ))
 
         async def background_stream_consumer():
             full_raw_reply = ""
             done_saved = False
+            lock_acquired = False
             try:
-                prep = await prep_task
-            except BaseException:
-                await queue.put(None)
-                supervisor.unregister_session(username, session_id)
-                return
-            current_conv_id = prep["conversation_id"]
-            try:
+                try:
+                    await prep_task
+                except BaseException as e:
+                    logger.error("Preparation failed for session %s (turn %s): %s", session_id, message_id, e)
+                    lock_acquire_task.cancel()
+                    return
+
+                if is_queued:
+                    cancel_task = asyncio.create_task(cancel_event.wait())
+                    done_tasks, pending = await asyncio.wait(
+                        [lock_acquire_task, cancel_task],
+                        return_when=asyncio.FIRST_COMPLETED
+                    )
+                    for p in pending:
+                        p.cancel()
+
+                    if cancel_task in done_tasks or message_id in self._cancelled_messages[session_id]:
+                        if lock_acquire_task in done_tasks:
+                            turn_lock.release()
+                        logger.info("Queued turn %s was cancelled before execution.", message_id)
+                        return
+
+                    lock_acquired = True
+
+                    if message_id in self._cancelled_messages[session_id]:
+                        return
+
+                    await self.session_service.activate_queued_message(username, session_id, message_id)
+                    await queue.put({"type": "processing", "message_id": message_id})
+
+                    prep = await self._prepare_chat_turn(
+                        username=username,
+                        session_id=session_id,
+                        message=message,
+                        location=location,
+                        valid_uploads=valid_uploads,
+                        image_paths=image_paths,
+                        image_urls=image_urls,
+                        images_data=images_data,
+                        files_data=files_data,
+                        attachments=attachments,
+                        display_msg=display_msg,
+                        message_id=message_id,
+                        already_saved=True,
+                        is_queued=False
+                    )
+                else:
+                    await lock_acquire_task
+                    lock_acquired = True
+                    prep = await prep_task
+
+                current_conv_id = prep["conversation_id"]
                 async for event in self._agy.stream_message(
                     context_messages=prep["history"],
                     new_message=message,
@@ -351,8 +513,18 @@ class ChatService:
                 logger.error(f"Error in background_stream_consumer for session {session_id}: {e}", exc_info=True)
                 await queue.put({"type": "error", "error": f"Streaming-Fehler: {str(e)}"})
             finally:
+                if lock_acquired:
+                    try:
+                        turn_lock.release()
+                    except RuntimeError:
+                        pass
+                else:
+                    lock_acquire_task.cancel()
+                self._active_or_queued_count[session_id] = max(0, self._active_or_queued_count[session_id] - 1)
+                self._cancel_events.pop((session_id, message_id), None)
+                self._cancelled_messages[session_id].discard(message_id)
                 await queue.put(None)
-                supervisor.unregister_session(username, session_id)
+                supervisor.unregister_session(username, session_id, turn_id=message_id)
 
         # Run consumer in supervisor background task shielded against client disconnect
         consumer_task = supervisor.create_task(background_stream_consumer())
@@ -363,8 +535,11 @@ class ChatService:
             except asyncio.CancelledError:
                 raise
             except BaseException:
-                supervisor.unregister_session(username, session_id)
+                supervisor.unregister_session(username, session_id, turn_id=message_id)
                 raise
+
+            if is_queued:
+                await queue.put({"type": "queued", "message_id": message_id})
 
             while True:
                 item = await queue.get()
@@ -376,6 +551,7 @@ class ChatService:
         except asyncio.CancelledError:
             logger.info(f"SSE client disconnected for session {session_id} (user '{username}'). Task continues in background.")
             raise
+
 
 
 # Global instance

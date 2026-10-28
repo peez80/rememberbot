@@ -71,7 +71,7 @@ def test_get_history_endpoint(mock_history, mock_exists, mock_title, mock_icon):
     mock_history.return_value = [{"text": "Hi", "is_user": True, "image_urls": [], "images": None, "files": None, "timestamp": None}]
     response = client.get("/api/sessions/sess-123/history")
     assert response.status_code == 200
-    assert response.json() == [{"text": "Hi", "is_user": True, "image_urls": [], "images": None, "files": None, "timestamp": None}]
+    assert response.json() == [{"id": None, "text": "Hi", "is_user": True, "status": None, "image_urls": [], "images": None, "files": None, "timestamp": None}]
     mock_history.assert_called_once_with("testuser", "sess-123")
 
 @patch("app.services.chat_service.chat_service.agy_service")

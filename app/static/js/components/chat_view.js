@@ -59,7 +59,7 @@ export const handleChatScroll = () => {
                 const msgImages = (msg.images || msg.image_urls || []).length > 0 
                     ? (msg.images || msg.image_urls) 
                     : msgFiles.filter(f => f.is_image);
-                const msgDiv = createMessageElement(msg.text, msg.is_user, msgImages, msg.timestamp, true, true, false, msgFiles);
+                const msgDiv = createMessageElement(msg.text, msg.is_user, msgImages, msg.timestamp, true, true, false, msgFiles, msg.id, msg.status);
                 fragment.appendChild(msgDiv);
             });
 
@@ -74,10 +74,13 @@ export const handleChatScroll = () => {
     }
 };
 
-export const createMessageElement = (text, isUser, imagesData = [], timestampStr = null, isHistory = false, skipScroll = false, smoothScroll = false, filesData = []) => {
+export const createMessageElement = (text, isUser, imagesData = [], timestampStr = null, isHistory = false, skipScroll = false, smoothScroll = false, filesData = [], messageId = null, status = null, onRemoveQueued = null) => {
     const chatContainer = getChatContainer();
     const msgDiv = document.createElement("div");
-    msgDiv.className = `message ${isUser ? "user-message" : "ai-message"} ${isHistory ? "history-message" : "new-message"}`;
+    msgDiv.className = `message ${isUser ? "user-message" : "ai-message"} ${isHistory ? "history-message" : "new-message"}${status === "queued" ? " queued-message" : ""}`;
+    if (messageId) {
+        msgDiv.dataset.messageId = messageId;
+    }
 
     if (timestampStr) {
         const timeDiv = document.createElement("div");
@@ -220,19 +223,60 @@ export const createMessageElement = (text, isUser, imagesData = [], timestampStr
         attachDownloadButtons(bubble, text);
     }
 
+    if (status === "queued") {
+        const bar = document.createElement("div");
+        bar.className = "message-queued-bar";
+
+        const badge = document.createElement("span");
+        badge.className = "queued-badge";
+        badge.innerHTML = '<i class="ph-bold ph-clock"></i> Wartend';
+
+        const removeBtn = document.createElement("button");
+        removeBtn.type = "button";
+        removeBtn.className = "remove-queued-btn";
+        removeBtn.title = "Wartende Nachricht entfernen";
+        removeBtn.setAttribute("aria-label", "Entfernen");
+        removeBtn.innerHTML = '<i class="ph-bold ph-x"></i>';
+        if (onRemoveQueued) {
+            removeBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                const currentId = msgDiv.dataset.messageId || messageId;
+                if (currentId) {
+                    onRemoveQueued(currentId, msgDiv);
+                }
+            });
+        }
+
+        bar.appendChild(badge);
+        bar.appendChild(removeBtn);
+        msgDiv.appendChild(bar);
+    }
+
     msgDiv.appendChild(bubble);
     return msgDiv;
 };
 
-export const appendMessage = (text, isUser, imagesData = [], timestampStr = null, skipScroll = false, smoothScroll = false, isHistory = false, filesData = []) => {
+export const markMessageProcessing = (msgDiv) => {
+    if (!msgDiv) return;
+    msgDiv.classList.remove("queued-message");
+    const bar = msgDiv.querySelector(".message-queued-bar");
+    if (bar) bar.remove();
+};
+
+export const appendMessage = (text, isUser, imagesData = [], timestampStr = null, skipScroll = false, smoothScroll = false, isHistory = false, filesData = [], messageId = null, status = null, onRemoveQueued = null, anchorElement = null) => {
     const chatContainer = getChatContainer();
-    if (!chatContainer) return;
-    const msgDiv = createMessageElement(text, isUser, imagesData, timestampStr, isHistory, skipScroll, smoothScroll, filesData);
-    chatContainer.appendChild(msgDiv);
+    if (!chatContainer) return null;
+    const msgDiv = createMessageElement(text, isUser, imagesData, timestampStr, isHistory, skipScroll, smoothScroll, filesData, messageId, status, onRemoveQueued);
+    if (anchorElement && anchorElement.parentNode === chatContainer) {
+        anchorElement.insertAdjacentElement('afterend', msgDiv);
+    } else {
+        chatContainer.appendChild(msgDiv);
+    }
     
     if (!skipScroll) {
         scrollToBottom(smoothScroll);
     }
+    return msgDiv;
 };
 
 export const appendErrorMessage = (errorText) => {
@@ -259,10 +303,10 @@ export const showInitialGreeting = () => {
     chatContainer.appendChild(msgDiv);
 };
 
-export const showTypingIndicator = () => {
+export const showTypingIndicator = (anchorElement = null) => {
     const chatContainer = getChatContainer();
     if (!chatContainer) return;
-    if (document.getElementById("typing-indicator")) return;
+    removeTypingIndicator();
 
     const typingDiv = document.createElement("div");
     typingDiv.className = "message ai-message typing-container";
@@ -273,7 +317,11 @@ export const showTypingIndicator = () => {
     bubble.innerHTML = '<div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>';
 
     typingDiv.appendChild(bubble);
-    chatContainer.appendChild(typingDiv);
+    if (anchorElement && anchorElement.parentNode === chatContainer) {
+        anchorElement.insertAdjacentElement('afterend', typingDiv);
+    } else {
+        chatContainer.appendChild(typingDiv);
+    }
     scrollToBottom(true);
 };
 
@@ -284,7 +332,7 @@ export const removeTypingIndicator = () => {
     }
 };
 
-export const initStreamingMessage = () => {
+export const initStreamingMessage = (anchorElement = null) => {
     const chatContainer = getChatContainer();
     if (!chatContainer) return null;
 
@@ -319,7 +367,11 @@ export const initStreamingMessage = () => {
 
     bubbleDiv.appendChild(textDiv);
     aiMsgDiv.appendChild(bubbleDiv);
-    chatContainer.appendChild(aiMsgDiv);
+    if (anchorElement && anchorElement.parentNode === chatContainer) {
+        anchorElement.insertAdjacentElement('afterend', aiMsgDiv);
+    } else {
+        chatContainer.appendChild(aiMsgDiv);
+    }
 
     return {
         aiMsgDiv,

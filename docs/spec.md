@@ -37,6 +37,13 @@ Die Anwendung ist ein generischer, agentischer KI-Chat mit persistentem Gedächt
 - **Session-Cookies:** Sichere Authentifizierung über `HttpOnly`- und `SameSite=Lax`-Cookies mit Rate-Limiting gegen Brute-Force-Angriffe.
 - **Isolierte Datenräume:** Jeder Benutzer greift ausschließlich auf seine eigenen Sitzungen, Dateien und Konversationen zu (`data/{username}/sessions/`).
 
+### 2.7 Nachrichtenschlange & Sequentielle Ausführung (Queueing)
+- **Folgenachrichten während KI-Generierung:** Gibt der Benutzer Nachrichten ein, während `agy` bereits arbeitet, werden diese nicht ungeordnet parallel ausgeführt. Stattdessen werden sie persistent in `session.json` und im Backend mit Status `queued` in einer FIFO-Warteschlange registriert.
+- **Kontext-Integrität:** Jeder Folgeturn startet erst nach vollständigem Abschluss des vorherigen Turns und erhält den gesamten bisherigen Verlauf (inklusive der vorausgegangenen KI-Antwort) als Kontext.
+- **Antwort-Positionierung:** Antworten werden im Chatverlauf und im DOM stets unmittelbar unter der dazugehörigen Nutzernachricht positioniert.
+- **Visuelle Kennzeichnung:** Wartende Nachrichten werden mit einem "Wartend"-Badge und gestricheltem Rahmen gekennzeichnet.
+- **Entfernen wartender Nachrichten:** Über einen Entfernen-Button (`DELETE /api/sessions/{session_id}/queue/{message_id}`) können wartende Nachrichten storniert und aus dem Verlauf gelöscht werden, solange ihre Ausführung noch nicht begonnen hat.
+
 ## 3. Technische Anforderungen
 
 ### 3.1 Technologie-Stack

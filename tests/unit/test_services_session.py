@@ -126,3 +126,91 @@ async def test_session_json_schema_integrity(session_service):
         assert key in expected_schema, f"Unexpected key in session.json: {key}"
 
 
+@pytest.mark.asyncio
+async def test_save_ai_message_inserts_before_queued_messages(session_service):
+    username = "alice"
+    session_id = await session_service.create_session(username, "Queue Test Chat")
+
+    # Save User 1 (active)
+    await session_service.save_session_message(username, session_id, {
+        "id": "msg-1",
+        "text": "User 1",
+        "is_user": True
+    })
+
+    # Save User 2 (queued) and User 3 (queued)
+    await session_service.save_session_message(username, session_id, {
+        "id": "msg-2",
+        "text": "User 2",
+        "is_user": True,
+        "status": "queued"
+    })
+    await session_service.save_session_message(username, session_id, {
+        "id": "msg-3",
+        "text": "User 3",
+        "is_user": True,
+        "status": "queued"
+    })
+
+    # Now AI Reply 1 arrives and is saved
+    await session_service.save_session_message(username, session_id, {
+        "text": "AI Reply 1",
+        "is_user": False
+    })
+
+    history = await session_service.get_session_history(username, session_id)
+    assert len(history) == 4
+    # The order MUST be [User 1, AI 1, User 2 (queued), User 3 (queued)]
+    assert history[0]["text"] == "User 1"
+    assert history[1]["text"] == "AI Reply 1"
+    assert history[1]["is_user"] is False
+    assert history[2]["text"] == "User 2"
+    assert history[2]["status"] == "queued"
+    assert history[3]["text"] == "User 3"
+    assert history[3]["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_activate_and_remove_queued_message(session_service):
+    username = "alice"
+    session_id = await session_service.create_session(username, "Queue Activation Chat")
+
+    await session_service.save_session_message(username, session_id, {
+        "id": "msg-q1",
+        "text": "Queued 1",
+        "is_user": True,
+        "status": "queued"
+    })
+    await session_service.save_session_message(username, session_id, {
+        "id": "msg-q2",
+        "text": "Queued 2",
+        "is_user": True,
+        "status": "queued"
+    })
+
+    # Remove msg-q2 while still queued
+    removed = await session_service.remove_queued_message(username, session_id, "msg-q2")
+    assert removed is True
+
+    history_after_remove = await session_service.get_session_history(username, session_id)
+    assert len(history_after_remove) == 1
+    assert history_after_remove[0]["id"] == "msg-q1"
+
+    # Cannot remove non-existent or already removed message
+    removed_again = await session_service.remove_queued_message(username, session_id, "msg-q2")
+    assert removed_again is False
+
+    # Activate msg-q1 (starts processing)
+    activated = await session_service.activate_queued_message(username, session_id, "msg-q1")
+    assert activated is True
+
+    history_after_activate = await session_service.get_session_history(username, session_id)
+    assert len(history_after_activate) == 1
+    assert history_after_activate[0].get("status") is None
+
+    # Cannot remove an active message that is no longer queued
+    removed_active = await session_service.remove_queued_message(username, session_id, "msg-q1")
+    assert removed_active is False
+
+
+

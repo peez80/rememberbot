@@ -1,3 +1,4 @@
+import re
 import json
 import pytest
 import threading
@@ -691,6 +692,140 @@ async def test_photo_message_persisted_across_chat_switch_during_ai_generation()
         await expect(user_msg_after_return.locator("img.chat-image")).to_be_visible()
 
         await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_followup_messages_queued_positioned_and_removable_e2e():
+    """Verify in real browser that submitting follow-up messages while agy is processing marks them as queued,
+    allows removing a queued message, and positions answers directly beneath their corresponding user message."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+
+        await page.route("**/api/auth/status", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"authenticated": true, "username": "testuser"}'
+        ))
+        await page.route("**/api/sessions", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='[{"id": "sess-queue-e2e", "title": "Queue E2E Chat", "created_at": "2026-01-01T00:00:00Z"}]'
+        ))
+        await page.route("**/api/sessions/*/settings", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"prompt": ""}'
+        ))
+        await page.route("**/api/sessions/*/history", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='[]'
+        ))
+
+        chat_turn_count = 0
+        async def mock_chat(route):
+            nonlocal chat_turn_count
+            chat_turn_count += 1
+            body = route.request.post_data or ""
+            # Extract message text from form data
+            import re
+            m = re.search(r'name="message"[^\r\n]*\r?\n\r?\n([^\r\n]*)', body)
+            user_text = m.group(1) if m else f"Msg {chat_turn_count}"
+
+            # Delay reply for Msg 1 so Msg 2 and Msg 3 can be typed in while it's running
+            if "Msg 1" in user_text:
+                await asyncio.sleep(1.5)
+            else:
+                await asyncio.sleep(0.5)
+
+            sse_payload = (
+                f'event: delta\ndata: {{"type": "delta", "text": "Antwort auf {user_text}"}}\n\n'
+                f'event: done\ndata: {{"type": "done", "reply": "Antwort auf {user_text}", "timestamp": "2026-01-01T00:00:05Z"}}\n\n'
+            )
+            await route.fulfill(
+                status=200,
+                headers={"Content-Type": "text/event-stream"},
+                body=sse_payload
+            )
+
+        deleted_message_ids = []
+        async def mock_queue_delete(route):
+            url = route.request.url
+            deleted_id = url.split("/queue/")[-1]
+            deleted_message_ids.append(deleted_id)
+            await route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"success": true}'
+            )
+
+        await page.route("**/api/sessions/*/chat", mock_chat)
+        await page.route("**/api/sessions/*/queue/*", mock_queue_delete)
+
+        await page.goto(f"http://127.0.0.1:{SERVER_PORT}")
+        await expect(page.locator("#chat-container")).to_be_visible()
+
+        # Send Msg 1
+        await page.fill("#message-input", "Msg 1")
+        await page.click("#send-btn")
+
+        # Typing indicator or streaming message for Msg 1 appears
+        await expect(page.locator(".user-message:has-text('Msg 1')")).to_be_visible()
+        await expect(page.locator("#typing-indicator")).to_be_visible()
+
+        # Now type and send Msg 2 while Msg 1 is still generating
+        await page.fill("#message-input", "Msg 2")
+        await page.click("#send-btn")
+
+        # Now type and send Msg 3
+        await page.fill("#message-input", "Msg 3")
+        await page.click("#send-btn")
+
+        # Typing indicator for Msg 1 must REMAIN visible while follow-up messages are queued!
+        await expect(page.locator("#typing-indicator")).to_be_visible()
+
+        # Msg 2 and Msg 3 MUST have .queued-message and remove button
+        msg2 = page.locator(".user-message:has-text('Msg 2')")
+        msg3 = page.locator(".user-message:has-text('Msg 3')")
+        await expect(msg2).to_have_class(re.compile(r"queued-message"))
+        await expect(msg3).to_have_class(re.compile(r"queued-message"))
+        await expect(msg2.locator(".remove-queued-btn")).to_be_visible()
+        await expect(msg3.locator(".remove-queued-btn")).to_be_visible()
+
+        # Remove Msg 2 by clicking its remove button
+        await msg2.locator(".remove-queued-btn").click()
+
+        # Msg 2 must be removed from the DOM (and NOT turn into a completed message)
+        await expect(page.locator(".user-message:has-text('Msg 2')")).to_have_count(0)
+        assert len(deleted_message_ids) == 1
+        assert deleted_message_ids[0].startswith("msg-")
+
+        # Typing indicator for Msg 1 must STILL be visible after removing Msg 2
+        await expect(page.locator("#typing-indicator")).to_be_visible()
+        # Wait a short interval for any cancellation tasks/events to resolve and re-verify indicator remains
+        await page.wait_for_timeout(300)
+        await expect(page.locator("#typing-indicator")).to_be_visible()
+
+        # Wait for all answers to arrive
+        await expect(page.locator("text='Antwort auf Msg 1'")).to_be_visible(timeout=5000)
+        await expect(page.locator("text='Antwort auf Msg 3'")).to_be_visible(timeout=5000)
+
+        # Verify exact positioning in DOM:
+        # Msg 1 -> Antwort auf Msg 1 -> Msg 3 -> Antwort auf Msg 3
+        messages_text = await page.evaluate("""() => {
+            return Array.from(document.querySelectorAll('#chat-container .message-bubble'))
+                .map(el => el.textContent.trim());
+        }""")
+        # Filter out empty or whitespace bubbles
+        messages_text = [t for t in messages_text if t]
+        assert "Msg 1" in messages_text[0]
+        assert "Antwort auf Msg 1" in messages_text[1]
+        assert "Msg 3" in messages_text[2]
+        assert "Antwort auf Msg 3" in messages_text[3]
+
+        await browser.close()
+
 
 
 

@@ -144,7 +144,16 @@ class SessionService:
             with open(filepath, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
-            data["history"].append(message)
+            history = data.setdefault("history", [])
+            if not message.get("is_user", True) and not message.get("status"):
+                first_queued_idx = next((i for i, m in enumerate(history) if m.get("status") == "queued"), None)
+                if first_queued_idx is not None:
+                    history.insert(first_queued_idx, message)
+                else:
+                    history.append(message)
+            else:
+                history.append(message)
+
             self.storage.atomic_write_json(filepath, data, indent=2)
         except Exception as e:
             logger.error(f"Failed to save message to session {session_id} for user '{username}': {e}", exc_info=True)
@@ -156,6 +165,87 @@ class SessionService:
             return await res if asyncio.iscoroutine(res) else res
         async with self.storage.session_locks[session_id]:
             await asyncio.to_thread(self._sync_save_session_message, username, session_id, message)
+
+    def _sync_activate_queued_message(self, username: str, session_id: str, message_id: str) -> bool:
+        filepath = self.storage.get_session_filepath(username, session_id)
+        if not os.path.exists(filepath):
+            logger.warning(f"Cannot activate queued message: session file {filepath} does not exist for user '{username}'")
+            return False
+
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            history = data.get("history", [])
+            found = False
+            for msg in history:
+                if msg.get("id") == message_id:
+                    msg.pop("status", None)
+                    found = True
+                    break
+
+            if found:
+                self.storage.atomic_write_json(filepath, data, indent=2)
+            return found
+        except Exception as e:
+            logger.error(f"Failed to activate queued message {message_id} in session {session_id} (user '{username}'): {e}", exc_info=True)
+            return False
+
+    async def activate_queued_message(self, username: str, session_id: str, message_id: str) -> bool:
+        mock = _get_mock_override("activate_queued_message")
+        if mock is not None:
+            res = mock(username, session_id, message_id)
+            return await res if asyncio.iscoroutine(res) else res
+        async with self.storage.session_locks[session_id]:
+            return await asyncio.to_thread(self._sync_activate_queued_message, username, session_id, message_id)
+
+    def _sync_remove_queued_message(self, username: str, session_id: str, message_id: str) -> bool:
+        filepath = self.storage.get_session_filepath(username, session_id)
+        if not os.path.exists(filepath):
+            logger.warning(f"Cannot remove queued message: session file {filepath} does not exist for user '{username}'")
+            return False
+
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            history = data.get("history", [])
+            target_idx = None
+            for idx, msg in enumerate(history):
+                if msg.get("id") == message_id:
+                    if msg.get("status") == "queued":
+                        target_idx = idx
+                    break
+
+            if target_idx is None:
+                return False
+
+            removed_msg = history.pop(target_idx)
+            self.storage.atomic_write_json(filepath, data, indent=2)
+
+            files_to_clean = []
+            for f_meta in (removed_msg.get("files") or []):
+                p = f_meta.get("path")
+                if p and os.path.isfile(p):
+                    files_to_clean.append(p)
+            for p in files_to_clean:
+                try:
+                    os.remove(p)
+                except OSError as err:
+                    logger.warning(f"Could not delete attachment {p} of removed queued message {message_id}: {err}")
+
+            return True
+        except Exception as e:
+            logger.error(f"Failed to remove queued message {message_id} from session {session_id} (user '{username}'): {e}", exc_info=True)
+            return False
+
+    async def remove_queued_message(self, username: str, session_id: str, message_id: str) -> bool:
+        mock = _get_mock_override("remove_queued_message")
+        if mock is not None:
+            res = mock(username, session_id, message_id)
+            return await res if asyncio.iscoroutine(res) else res
+        async with self.storage.session_locks[session_id]:
+            return await asyncio.to_thread(self._sync_remove_queued_message, username, session_id, message_id)
 
     def _sync_update_session_title(self, username: str, session_id: str, new_title: str):
         filepath = self.storage.get_session_filepath(username, session_id)

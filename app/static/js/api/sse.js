@@ -2,7 +2,7 @@
  * SSE streaming response consumer using the Fetch ReadableStream API.
  */
 
-export const readSSEStream = async (response, { onDelta, onDone, onError, onDisconnect }) => {
+export const readSSEStream = async (response, { onDelta, onDone, onError, onDisconnect, onQueued, onProcessing }) => {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let sseBuffer = "";
@@ -24,6 +24,10 @@ export const readSSEStream = async (response, { onDelta, onDone, onError, onDisc
                         const event = JSON.parse(trimmed.slice(6));
                         if (event.type === "delta") {
                             if (onDelta) onDelta(event);
+                        } else if (event.type === "queued") {
+                            if (onQueued) onQueued(event);
+                        } else if (event.type === "processing") {
+                            if (onProcessing) onProcessing(event);
                         } else if (event.type === "done") {
                             receivedTerminalEvent = true;
                             if (onDone) onDone(event);

@@ -38,7 +38,8 @@ def test_session_status_endpoint_idle(mock_exists):
         "id": "sess-123",
         "is_processing": False,
         "is_generating_icon": False,
-        "has_icon": False
+        "has_icon": False,
+        "queued_count": 0
     }
 
 
@@ -112,7 +113,8 @@ async def test_session_status_endpoint_processing(
             "id": "sess-123",
             "is_processing": True,
             "is_generating_icon": False,
-            "has_icon": False
+            "has_icon": False,
+            "queued_count": 0
         }
 
         # Verify user message was saved to history immediately before process_message returned
@@ -139,7 +141,8 @@ async def test_session_status_endpoint_processing(
             "id": "sess-123",
             "is_processing": False,
             "is_generating_icon": False,
-            "has_icon": False
+            "has_icon": False,
+            "queued_count": 0
         }
 
         # Verify history returns X-Is-Processing: false header
@@ -235,7 +238,8 @@ async def test_session_status_cleanup_on_error(
             "id": "sess-123",
             "is_processing": False,
             "is_generating_icon": False,
-            "has_icon": False
+            "has_icon": False,
+            "queued_count": 0
         }
 
 

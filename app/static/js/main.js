@@ -303,7 +303,15 @@ document.addEventListener("DOMContentLoaded", () => {
                     return;
                 }
                 const data = await res.json();
-                if (!data.is_processing) {
+                if (data.is_processing) {
+                    if (state.currentSessionId === sessionId) {
+                        const hasIndicator = document.getElementById("typing-indicator");
+                        const hasStreaming = document.querySelector(".message.streaming");
+                        if (!hasIndicator && !hasStreaming) {
+                            chatView.showTypingIndicator();
+                        }
+                    }
+                } else {
                     if (state.currentSessionId === sessionId && state.activeSubmittingSessionId !== sessionId) {
                         const loaded = await selectSession(sessionId, true);
                         if (!loaded) return;
@@ -319,6 +327,47 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const timerId = setInterval(checkStatus, 500);
         state.activePollTimers.set(sessionId, timerId);
+    };
+
+    const handleRemoveQueued = async (messageId, msgElement) => {
+        try {
+            if (msgElement) {
+                msgElement._wasRemovedByUser = true;
+                if (msgElement._abortController) {
+                    try {
+                        msgElement._abortController.abort();
+                    } catch (_) {}
+                }
+                msgElement.remove();
+            }
+            const idx = state.currentSessionHistory.findIndex(m => m.id === messageId);
+            if (idx !== -1) {
+                state.currentSessionHistory.splice(idx, 1);
+            }
+
+            const ensureActiveIndicator = () => {
+                const stillBusy = (state.activeSubmissionsBySession.get(state.currentSessionId) || 0) > 0 || state.activeSubmittingSessionId === state.currentSessionId;
+                if (stillBusy) {
+                    const hasIndicator = document.getElementById("typing-indicator");
+                    const hasStreaming = document.querySelector(".message.streaming");
+                    if (!hasIndicator && !hasStreaming) {
+                        chatView.showTypingIndicator();
+                    }
+                }
+            };
+            ensureActiveIndicator();
+
+            const res = await api.deleteQueuedMessage(state.currentSessionId, messageId);
+            if (!res.ok && res.status === 409) {
+                if (msgElement) {
+                    msgElement._wasRemovedByUser = false;
+                    chatView.markMessageProcessing(msgElement);
+                }
+            }
+            ensureActiveIndicator();
+        } catch (err) {
+            console.error("Failed to delete queued message:", err);
+        }
     };
 
     const applySessionHistoryToView = (sessionId, history, isProcessing) => {
@@ -337,7 +386,19 @@ document.addEventListener("DOMContentLoaded", () => {
                 const msgImages = (msg.images || msg.image_urls || []).length > 0 
                     ? (msg.images || msg.image_urls) 
                     : msgFiles.filter(f => f.is_image);
-                chatView.appendMessage(msg.text, msg.is_user, msgImages, msg.timestamp, true, false, true, msgFiles);
+                chatView.appendMessage(
+                    msg.text,
+                    msg.is_user,
+                    msgImages,
+                    msg.timestamp,
+                    true,
+                    false,
+                    true,
+                    msgFiles,
+                    msg.id,
+                    msg.status,
+                    handleRemoveQueued
+                );
             });
             chatView.scrollToBottom(false);
         } else if (!isProcessing && state.activeSubmittingSessionId !== sessionId) {
@@ -617,8 +678,13 @@ document.addEventListener("DOMContentLoaded", () => {
             if (!text && state.selectedFiles.length === 0) return;
 
             const submittedSessionId = state.currentSessionId;
+            const isBusy = (state.activeSubmissionsBySession.get(submittedSessionId) || 0) > 0 || state.activeSubmittingSessionId === submittedSessionId;
+            const activeCount = (state.activeSubmissionsBySession.get(submittedSessionId) || 0) + 1;
+            state.activeSubmissionsBySession.set(submittedSessionId, activeCount);
             state.activeSubmittingSessionId = submittedSessionId;
             ++state.selectSessionCounter;
+
+            startPollingSession(submittedSessionId);
 
             if (contextWarning) contextWarning.style.display = "none";
             chatView.hideChatLoading();
@@ -648,7 +714,9 @@ document.addEventListener("DOMContentLoaded", () => {
             state.selectedFiles = [];
             inputBar.updatePreviewUI();
 
-            chatView.showTypingIndicator();
+            if (!isBusy) {
+                chatView.showTypingIndicator();
+            }
             
             let locationStr = "";
             if (state.currentSessionGpsEnabled) {
@@ -678,17 +746,36 @@ document.addEventListener("DOMContentLoaded", () => {
                 displayMsg += displayMsg ? ` [${numDoc} Datei(en) angehängt]` : `[${numDoc} Datei(en) gesendet]`;
             }
 
-            chatView.removeTypingIndicator();
+            if (!isBusy) {
+                chatView.removeTypingIndicator();
+            }
 
             const greetingEl = document.getElementById("initial-greeting");
             if (greetingEl) greetingEl.remove();
 
             const baselineHistoryCount = state.currentSessionHistory.length;
             const now = new Date().toISOString();
-            chatView.appendMessage(displayMsg, true, localImages, now, false, true, false, localNonImages);
+            const clientMessageId = "msg-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+
+            const userMsgDiv = chatView.appendMessage(
+                displayMsg,
+                true,
+                localImages,
+                now,
+                false,
+                true,
+                false,
+                localNonImages,
+                clientMessageId,
+                isBusy ? "queued" : null,
+                handleRemoveQueued
+            );
+
             state.currentSessionHistory.push({
+                id: clientMessageId,
                 text: displayMsg,
                 is_user: true,
+                status: isBusy ? "queued" : null,
                 images: localImages,
                 files: localNonImages,
                 timestamp: now
@@ -696,6 +783,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
             const formData = new FormData();
             formData.append("message", text);
+            formData.append("message_id", clientMessageId);
             formData.append("stream", "true");
             filesToUpload.forEach(file => {
                 formData.append("files", file);
@@ -704,10 +792,15 @@ document.addEventListener("DOMContentLoaded", () => {
                 formData.append("location", locationStr);
             }
 
-            chatView.showTypingIndicator();
+            if (!isBusy) {
+                chatView.showTypingIndicator(userMsgDiv);
+            }
 
             const streamAbortController = new AbortController();
-            state.activeStreamAbortController = streamAbortController;
+            userMsgDiv._abortController = streamAbortController;
+            if (!isBusy) {
+                state.activeStreamAbortController = streamAbortController;
+            }
             state.streamWasHidden = (document.visibilityState === "hidden");
 
             try {
@@ -742,10 +835,53 @@ document.addEventListener("DOMContentLoaded", () => {
                     let streamDisconnectError = null;
 
                     await readSSEStream(response, {
+                        onQueued: (event) => {
+                            if (userMsgDiv && userMsgDiv._wasRemovedByUser) return;
+                            const msgId = event.message_id || clientMessageId;
+                            if (userMsgDiv) {
+                                userMsgDiv.dataset.messageId = msgId;
+                                if (!userMsgDiv.classList.contains("queued-message")) {
+                                    userMsgDiv.classList.add("queued-message");
+                                }
+                                if (!userMsgDiv.querySelector(".message-queued-bar")) {
+                                    const bar = document.createElement("div");
+                                    bar.className = "message-queued-bar";
+
+                                    const badge = document.createElement("span");
+                                    badge.className = "queued-badge";
+                                    badge.innerHTML = '<i class="ph-bold ph-clock"></i> Wartend';
+
+                                    const removeBtn = document.createElement("button");
+                                    removeBtn.type = "button";
+                                    removeBtn.className = "remove-queued-btn";
+                                    removeBtn.title = "Wartende Nachricht entfernen";
+                                    removeBtn.setAttribute("aria-label", "Entfernen");
+                                    removeBtn.innerHTML = '<i class="ph-bold ph-x"></i>';
+                                    removeBtn.addEventListener("click", (e) => {
+                                        e.stopPropagation();
+                                        const currentId = userMsgDiv.dataset.messageId || msgId;
+                                        handleRemoveQueued(currentId, userMsgDiv);
+                                    });
+
+                                    bar.appendChild(badge);
+                                    bar.appendChild(removeBtn);
+                                    userMsgDiv.appendChild(bar);
+                                }
+                            }
+                        },
+                        onProcessing: (event) => {
+                            if (userMsgDiv && userMsgDiv._wasRemovedByUser) return;
+                            state.activeStreamAbortController = streamAbortController;
+                            chatView.markMessageProcessing(userMsgDiv);
+                            if (state.currentSessionId === submittedSessionId) {
+                                chatView.showTypingIndicator(userMsgDiv);
+                            }
+                        },
                         onDelta: (event) => {
+                            if (userMsgDiv && userMsgDiv._wasRemovedByUser) return;
                             if (state.currentSessionId === submittedSessionId) {
                                 if (!streamController) {
-                                    streamController = chatView.initStreamingMessage();
+                                    streamController = chatView.initStreamingMessage(userMsgDiv);
                                 }
                                 accumulatedText += event.text;
                                 chatView.updateStreamingMessage(streamController, accumulatedText);
@@ -754,9 +890,10 @@ document.addEventListener("DOMContentLoaded", () => {
                             }
                         },
                         onDone: (event) => {
+                            if (userMsgDiv && userMsgDiv._wasRemovedByUser) return;
                             if (state.currentSessionId === submittedSessionId) {
                                 if (!streamController) {
-                                    chatView.appendMessage(event.reply || accumulatedText, false, [], event.timestamp, false, true, false);
+                                    chatView.appendMessage(event.reply || accumulatedText, false, [], event.timestamp, false, true, false, [], null, null, null, userMsgDiv);
                                 } else {
                                     chatView.finalizeStreamingMessage(streamController, event.reply || accumulatedText);
                                 }
@@ -772,6 +909,7 @@ document.addEventListener("DOMContentLoaded", () => {
                             }
                         },
                         onError: (event) => {
+                            if (userMsgDiv && userMsgDiv._wasRemovedByUser) return;
                             chatView.removeStreamingMessage(streamController);
                             streamController = null;
                             if (state.currentSessionId === submittedSessionId) {
@@ -779,10 +917,15 @@ document.addEventListener("DOMContentLoaded", () => {
                             }
                         },
                         onDisconnect: (err) => {
+                            if (userMsgDiv && userMsgDiv._wasRemovedByUser) return;
                             streamDisconnected = true;
                             streamDisconnectError = err;
                         }
                     });
+
+                    if (userMsgDiv && userMsgDiv._wasRemovedByUser) {
+                        return;
+                    }
 
                     if (streamDisconnected) {
                         chatView.removeStreamingMessage(streamController);
@@ -790,9 +933,11 @@ document.addEventListener("DOMContentLoaded", () => {
                         throw streamDisconnectError || new Error("SSE stream disconnected");
                     }
 
-                    chatView.removeTypingIndicator();
-                    if (streamController && streamController.aiMsgDiv) {
-                        streamController.aiMsgDiv.classList.remove("streaming");
+                    if (!userMsgDiv?._wasRemovedByUser) {
+                        chatView.removeTypingIndicator();
+                        if (streamController && streamController.aiMsgDiv) {
+                            streamController.aiMsgDiv.classList.remove("streaming");
+                        }
                     }
 
                     try {
@@ -812,11 +957,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 } else {
                     const data = await response.json();
+                    if (userMsgDiv && userMsgDiv._wasRemovedByUser) return;
                     chatView.removeTypingIndicator();
 
                     if (state.currentSessionId !== submittedSessionId) return;
 
-                    chatView.appendMessage(data.reply, false, [], data.timestamp, false, true, false);
+                    chatView.appendMessage(data.reply, false, [], data.timestamp, false, true, false, [], null, null, null, userMsgDiv);
                     state.currentSessionHistory.push({
                         text: data.reply,
                         is_user: false,
@@ -842,6 +988,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
 
             } catch (error) {
+                if (userMsgDiv && userMsgDiv._wasRemovedByUser) {
+                    return;
+                }
                 if (state.activeStreamAbortController === streamAbortController) {
                     state.activeStreamAbortController = null;
                 }
@@ -863,8 +1012,21 @@ document.addEventListener("DOMContentLoaded", () => {
                     state.activeStreamAbortController = null;
                 }
                 state.streamWasHidden = false;
-                if (state.activeSubmittingSessionId === submittedSessionId) {
-                    state.activeSubmittingSessionId = null;
+                const count = Math.max(0, (state.activeSubmissionsBySession.get(submittedSessionId) || 1) - 1);
+                if (count === 0) {
+                    state.activeSubmissionsBySession.delete(submittedSessionId);
+                    if (state.activeSubmittingSessionId === submittedSessionId) {
+                        state.activeSubmittingSessionId = null;
+                    }
+                } else {
+                    state.activeSubmissionsBySession.set(submittedSessionId, count);
+                    if (state.currentSessionId === submittedSessionId) {
+                        const hasIndicator = document.getElementById("typing-indicator");
+                        const hasStreaming = document.querySelector(".message.streaming");
+                        if (!hasIndicator && !hasStreaming) {
+                            chatView.showTypingIndicator();
+                        }
+                    }
                 }
             }
         });

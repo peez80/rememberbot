@@ -26,6 +26,7 @@ from app.services.auth_service import get_current_user
 from app.services.session_service import session_service
 from app.services.storage_service import storage_service
 from app.services.agy_service import agy_service as agy_client
+from app.services.chat_service import chat_service
 
 logger = logging.getLogger(__name__)
 
@@ -67,12 +68,14 @@ async def get_session_status_endpoint(session_id: str, username: str = Depends(g
         raise HTTPException(status_code=404, detail="Session not found")
 
     is_processing = supervisor.is_session_active(username, session_id)
+    queued_count = chat_service.get_queued_count(session_id)
     target_icon_path = storage_service.get_session_icon_target_path(username, session_id)
     is_generating_icon = agy_client.is_generating_icon(target_icon_path)
     has_icon = storage_service.get_session_icon_path(username, session_id) is not None
     return {
         "id": session_id,
         "is_processing": is_processing,
+        "queued_count": queued_count,
         "is_generating_icon": is_generating_icon,
         "has_icon": has_icon,
     }

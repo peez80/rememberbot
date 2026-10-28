@@ -153,3 +153,134 @@ async def test_stream_chat_continues_in_background_if_disconnected_during_prepar
         assert supervisor.is_session_active(username, session_id) is False
 
 
+@pytest.mark.asyncio
+async def test_queued_chat_emits_queued_and_processing_sse_events():
+    """Verify that submitting a message while another message is being processed emits 'queued' immediately,
+    followed by 'processing', deltas, and 'done' once the prior turn finishes."""
+    import asyncio
+    from app.services.chat_service import chat_service
+    from app.main import app
+
+    turn1_blocker = asyncio.Event()
+
+    async def mock_stream(*args, **kwargs):
+        msg = kwargs.get("new_message")
+        if msg == "First message":
+            yield {"type": "delta", "text": "Reply 1"}
+            await turn1_blocker.wait()
+            yield {"type": "done", "reply": "Reply 1"}
+        else:
+            yield {"type": "delta", "text": "Reply 2"}
+            yield {"type": "done", "reply": "Reply 2"}
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        # Create session first
+        sess_res = await client.post("/api/sessions")
+        session_id = sess_res.json()["id"]
+
+        with patch.object(chat_service._agy, "stream_message", side_effect=mock_stream):
+            # Start first message
+            t1_task = asyncio.create_task(client.post(
+                f"/api/sessions/{session_id}/chat",
+                data={"message": "First message", "stream": "true"},
+                headers={"Accept": "text/event-stream"}
+            ))
+            await asyncio.sleep(0.05)
+
+            # Start second message while first is waiting on blocker
+            t2_task = asyncio.create_task(client.post(
+                f"/api/sessions/{session_id}/chat",
+                data={"message": "Second message", "stream": "true"},
+                headers={"Accept": "text/event-stream"}
+            ))
+            await asyncio.sleep(0.05)
+
+            # Unblock turn 1 so both can complete sequentially
+            turn1_blocker.set()
+            t1_response, t2_response = await asyncio.gather(t1_task, t2_task)
+
+            assert t1_response.status_code == 200
+            assert t2_response.status_code == 200
+
+            # t2_response must contain 'event: queued' and 'event: processing'
+            assert "event: queued" in t2_response.text
+            assert "event: processing" in t2_response.text
+
+
+@pytest.mark.asyncio
+async def test_delete_queued_message_endpoint():
+    """Verify DELETE /api/sessions/{id}/queue/{message_id} functionality and error handling."""
+    from app.main import app
+    from app.services.session_service import session_service
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        sess_res = await client.post("/api/sessions")
+        session_id = sess_res.json()["id"]
+
+        # Manually save a queued message
+        await session_service.save_session_message("testuser", session_id, {
+            "id": "queued-to-delete",
+            "text": "Waiting message",
+            "is_user": True,
+            "status": "queued"
+        })
+
+        # Delete it via endpoint
+        del_res = await client.delete(f"/api/sessions/{session_id}/queue/queued-to-delete")
+        assert del_res.status_code == 200
+        assert del_res.json()["success"] is True
+
+        # Deleting again returns 409
+        del_again = await client.delete(f"/api/sessions/{session_id}/queue/queued-to-delete")
+        assert del_again.status_code == 409
+
+        # Bad session ID or message ID returns 400
+        bad_res = await client.delete(f"/api/sessions/{session_id}/queue/invalid*id")
+        assert bad_res.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_chat_endpoint_accepts_and_validates_custom_message_id():
+    """Verify that POST /api/sessions/{session_id}/chat accepts client-provided message_id and validates it."""
+    from app.main import app
+    from app.services.session_service import session_service
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        sess_res = await client.post("/api/sessions")
+        session_id = sess_res.json()["id"]
+
+        # Valid custom message_id
+        custom_id = "msg-client-test-12345"
+        res = await client.post(
+            f"/api/sessions/{session_id}/chat",
+            data={
+                "message": "Custom ID message",
+                "message_id": custom_id,
+                "stream": "false"
+            }
+        )
+        assert res.status_code == 200
+
+        history = await session_service.get_session_history("testuser", session_id)
+        user_msgs = [m for m in history if m.get("is_user")]
+        assert len(user_msgs) >= 1
+        assert user_msgs[0].get("id") == custom_id
+
+        # Invalid custom message_id (contains path traversal or invalid characters)
+        bad_res = await client.post(
+            f"/api/sessions/{session_id}/chat",
+            data={
+                "message": "Bad ID message",
+                "message_id": "../../bad_id!",
+                "stream": "false"
+            }
+        )
+        assert bad_res.status_code == 400
+        assert "Ungültige Nachrichten-ID" in bad_res.text
+
+
+
+

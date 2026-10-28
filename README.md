@@ -18,6 +18,7 @@ I loved the agentic behavior of the `gemini` / `antigravity` CLI, and I wanted t
 
 ## Features
 - **Conversational Interface**: Interact with your AI agent just by chatting.
+- **Sequential Message Queueing**: Type follow-up messages while the AI agent is actively processing without race conditions or jumbled answers. Follow-up messages are queued sequentially in strict FIFO order, executed with full conversation context preserved, positioned directly under their corresponding user prompt, and can be easily cancelled before execution begins.
 - **Real-Time Live Streaming & Low-Latency Turns**: Experience smooth token-by-token output streaming powered by `agy --output-format stream-json` and Server-Sent Events (SSE). Multi-turn conversations run with minimal latency via native `agy --conversation` context continuation without re-parsing chat history on every turn.
 - **High-Performance Chat Loading & Feedback**: Lightning-fast session switching with instant visual loading overlay, progressive rendering (20-message initial batch with seamless infinite scroll), and $O(1)$ direct session lookup.
 - **Automatic Thumbnail Generation & Caching**: Fast image loading with on-demand generated thumbnails (max 400px, EXIF-transposed, transparent-safe JPEG), long-term HTTP caching (`immutable`), and full-resolution viewing in a new tab.

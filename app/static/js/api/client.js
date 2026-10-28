@@ -167,6 +167,12 @@ export const sendChatMessage = async (sessionId, formData, { signal } = {}) => {
     });
 };
 
+export const deleteQueuedMessage = async (sessionId, messageId) => {
+    return apiFetch(`/api/sessions/${sessionId}/queue/${messageId}`, {
+        method: "DELETE"
+    });
+};
+
 export const exportSessionArchive = async (sessionId, signal) => {
     const res = await apiFetch(`/api/sessions/${sessionId}/export`, { signal });
     if (!res.ok) {

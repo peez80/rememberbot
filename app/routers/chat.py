@@ -1,8 +1,9 @@
 import os
 import re
+import uuid
 import asyncio
 import logging
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Request, Response, UploadFile, File, Form, HTTPException, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -24,6 +25,7 @@ async def chat_endpoint(
     message: str = Form(""),
     location: str = Form(""),
     stream: str = Form("false"),
+    message_id: Optional[str] = Form(None),
     files: List[UploadFile] = File([]),
     images: List[UploadFile] = File([]),
     username: str = Depends(get_current_user)
@@ -32,16 +34,22 @@ async def chat_endpoint(
         logger.warning(f"Invalid session_id in chat request: '{session_id}' by user '{username}'")
         raise HTTPException(status_code=400, detail="Ungültige Sitzungs-ID")
 
+    if message_id and not is_safe_session_id(message_id):
+        logger.warning(f"Invalid message_id in chat request: '{message_id}' by user '{username}'")
+        raise HTTPException(status_code=400, detail="Ungültige Nachrichten-ID")
+
     exists = await session_service.check_session_exists(username, session_id)
     if not exists:
         logger.warning(f"Chat request sent to non-existent session {session_id} by user '{username}'")
         raise HTTPException(status_code=404, detail="Session not found")
 
-    supervisor.register_session(username, session_id)
+    if not message_id:
+        message_id = uuid.uuid4().hex
+    supervisor.register_session(username, session_id, turn_id=message_id)
 
     valid_uploads = [f for f in (files + images) if f.filename]
     if len(valid_uploads) > MAX_UPLOADS_PER_MESSAGE:
-        supervisor.unregister_session(username, session_id)
+        supervisor.unregister_session(username, session_id, turn_id=message_id)
         logger.warning(f"Rejected chat request: {len(valid_uploads)} files uploaded (max {MAX_UPLOADS_PER_MESSAGE}) for session {session_id} by '{username}'")
         return JSONResponse(status_code=400, content={"error": f"Maximal {MAX_UPLOADS_PER_MESSAGE} Dateien erlaubt"})
 
@@ -66,11 +74,11 @@ async def chat_endpoint(
             display_msg = chat_service.format_display_message(message, num_images, num_docs)
             logger.info(f"User '{username}' uploaded {len(valid_uploads)} file(s) for session {session_id}")
     except ValueError as ve:
-        supervisor.unregister_session(username, session_id)
+        supervisor.unregister_session(username, session_id, turn_id=message_id)
         logger.warning(f"Rejected upload for session {session_id} by '{username}': {ve}")
         return JSONResponse(status_code=413, content={"error": str(ve)})
     except Exception as e:
-        supervisor.unregister_session(username, session_id)
+        supervisor.unregister_session(username, session_id, turn_id=message_id)
         logger.error(f"Failed to process/save file upload for session {session_id} (user '{username}'): {e}", exc_info=True)
         raise
 
@@ -90,7 +98,8 @@ async def chat_endpoint(
                 images_data=images_data,
                 files_data=files_data,
                 attachments=attachments,
-                display_msg=display_msg
+                display_msg=display_msg,
+                message_id=message_id
             ),
             media_type="text/event-stream",
             headers={
@@ -114,13 +123,12 @@ async def chat_endpoint(
                 images_data=images_data,
                 files_data=files_data,
                 attachments=attachments,
-                display_msg=display_msg
+                display_msg=display_msg,
+                message_id=message_id
             )
         except Exception as e:
             logger.error(f"Error in non-streaming chat process for session {session_id} (user '{username}'): {e}", exc_info=True)
             raise
-        finally:
-            supervisor.unregister_session(username, session_id)
 
     task = supervisor.create_task(process_and_save())
     try:
@@ -129,3 +137,28 @@ async def chat_endpoint(
     except asyncio.CancelledError:
         logger.info(f"Client disconnected during chat request for session {session_id} (user '{username}'). Task continues in background.")
         raise
+
+
+@router.delete("/{session_id}/queue/{message_id}")
+async def delete_queued_message_endpoint(
+    session_id: str,
+    message_id: str,
+    username: str = Depends(get_current_user)
+):
+    if not is_safe_session_id(session_id) or not is_safe_session_id(message_id):
+        logger.warning(f"Invalid session_id or message_id in queue delete request: sess='{session_id}', msg='{message_id}' (user '{username}')")
+        raise HTTPException(status_code=400, detail="Ungültige Parameter")
+
+    exists = await session_service.check_session_exists(username, session_id)
+    if not exists:
+        logger.warning(f"Queue delete requested for non-existent session {session_id} by user '{username}'")
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    removed = await chat_service.cancel_queued_message(username, session_id, message_id)
+    if not removed:
+        logger.warning(f"Cannot delete queued message {message_id} from session {session_id}: already processing or not found")
+        raise HTTPException(status_code=409, detail="Nachricht wird bereits verarbeitet oder wurde nicht gefunden")
+
+    logger.info(f"User '{username}' successfully deleted queued message {message_id} from session {session_id}")
+    return {"success": True, "message_id": message_id}
+
