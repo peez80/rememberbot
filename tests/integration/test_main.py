@@ -28,6 +28,21 @@ def test_index_route(tmp_path):
         assert response.status_code == 200
         assert "Mock" in response.text
 
+
+def test_index_route_custom_title_and_apple_touch_icon():
+    response = client.get("/?title=Mein+Kaffee+Shortcut")
+    assert response.status_code == 200
+    assert "<title>Mein Kaffee Shortcut</title>" in response.text
+    assert 'rel="apple-touch-icon"' in response.text
+    assert 'id="apple-touch-icon"' in response.text
+
+
+def test_index_route_custom_title_xss_escaped():
+    response = client.get("/?title=%3Cscript%3Ealert(1)%3C/script%3E")
+    assert response.status_code == 200
+    assert "<script>alert(1)</script>" not in response.text
+    assert "<title>&lt;script&gt;alert(1)&lt;/script&gt;</title>" in response.text
+
 def test_unauthenticated_access():
     assert client.post("/api/sessions").status_code == 401
     assert client.get("/api/sessions").status_code == 401

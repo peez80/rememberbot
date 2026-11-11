@@ -1,5 +1,6 @@
 import os
 import re
+import html
 import asyncio
 import logging
 from contextlib import asynccontextmanager
@@ -219,7 +220,7 @@ def _get_static_asset_version(relative_path: str) -> str:
         return "1"
 
 @app.get("/", response_class=HTMLResponse)
-async def serve_index():
+async def serve_index(request: Request):
     index_file = os.path.join(static_dir, "index.html")
     try:
         with open(index_file, "r", encoding="utf-8") as f:
@@ -232,6 +233,11 @@ async def serve_index():
         content = re.sub(r'href="/static/styles\.css(\?v=[^"\'\s]*)?"', f'href="/static/styles.css?v={styles_v}"', content)
         content = re.sub(r'src="/static/js/main\.js(\?v=[^"\'\s]*)?"', f'src="/static/js/main.js?v={main_v}"', content)
         content = re.sub(r'href="/static/favicon\.png(\?v=[^"\'\s]*)?"', f'href="/static/favicon.png?v={favicon_v}"', content)
+
+        custom_title = request.query_params.get("title", "").strip()
+        if custom_title:
+            safe_title = html.escape(custom_title[:80])
+            content = re.sub(r'<title>.*?</title>', f'<title>{safe_title}</title>', content, count=1)
 
         return HTMLResponse(
             content=content,

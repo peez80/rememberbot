@@ -43,7 +43,8 @@ FROM production AS test
 
 # Install test dependencies and Playwright browser with dependencies
 COPY requirements-test.txt .
-RUN pip install --no-cache-dir -r requirements-test.txt && \
+RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 && rm -rf /var/lib/apt/lists/* && \
+    pip install --no-cache-dir -r requirements-test.txt && \
     playwright install --with-deps chromium
 
 # Copy tests and pytest configuration

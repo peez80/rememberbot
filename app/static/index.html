@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RememberBot - Persistent Agentic AI Chat</title>
-    <link rel="icon" type="image/png" href="/static/favicon.png">
+    <link rel="icon" type="image/png" id="favicon-link" href="/static/favicon.png">
+    <link rel="apple-touch-icon" id="apple-touch-icon" href="/static/favicon.png">
     <!-- Modern Typography: Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -59,6 +60,30 @@
                     <i class="ph-bold ph-sign-out"></i>
                 </button>
             </header>
+
+            <!-- Homescreen Shortcut Setup Banner -->
+            <div id="shortcut-setup-banner" class="shortcut-setup-banner" style="display: none;" role="region" aria-label="Homescreen-Shortcut Einrichtung">
+                <div class="shortcut-setup-content">
+                    <div class="shortcut-setup-header">
+                        <i class="ph-bold ph-device-mobile"></i>
+                        <strong>Shortcut bereit: <span id="shortcut-banner-title"></span></strong>
+                    </div>
+                    <p class="shortcut-setup-instructions">
+                        Wähle jetzt im Browser-Menü <strong>„Zum Home-Bildschirm hinzufügen“</strong> (iOS: Teilen-Symbol &rarr; Zum Home-Bildschirm | Android: &vellip; Menü &rarr; Zum Startbildschirm hinzufügen).
+                    </p>
+                    <div class="shortcut-setup-preview">
+                        <span>Nachricht bei 1-Tap:</span> <code id="shortcut-banner-prompt"></code>
+                    </div>
+                </div>
+                <div class="shortcut-setup-actions">
+                    <button type="button" class="secondary-btn" id="copy-shortcut-link-btn" title="Shortcut-URL in die Zwischenablage kopieren">
+                        <i class="ph-bold ph-copy"></i> Link kopieren
+                    </button>
+                    <button type="button" class="primary-btn" id="exit-shortcut-setup-btn" title="Einrichtungs-Modus beenden">
+                        Fertig
+                    </button>
+                </div>
+            </div>
 
             <div class="chat-main-area">
                 <main class="chat-container" id="chat-container">
@@ -168,6 +193,9 @@
                         <button type="button" class="secondary-btn" id="import-session-btn" title="Chat aus ZIP importieren">
                             <i class="ph-bold ph-upload-simple"></i> Chat importieren
                         </button>
+                        <button type="button" class="secondary-btn" id="open-shortcut-modal-btn" title="1-Tap Homescreen-Shortcut für diesen Chat einrichten">
+                            <i class="ph-bold ph-device-mobile"></i> Homescreen-Shortcut
+                        </button>
                         <input type="file" id="import-session-input" accept=".zip,application/zip" style="display: none;">
                     </div>
                     <div id="import-status-text" class="import-status-text" style="display: none;"></div>
@@ -251,6 +279,33 @@
             <div id="import-modal-actions" style="display: flex; justify-content: flex-end; gap: 0.5rem;">
                 <button type="button" class="secondary-btn" id="import-cancel-btn">Abbrechen</button>
             </div>
+        </div>
+    </div>
+
+    <!-- Homescreen Shortcut Modal -->
+    <div id="shortcut-modal" class="modal-overlay" style="display: none; z-index: 1100;">
+        <div class="modal-content" style="max-width: 460px; text-align: left;">
+            <h2 style="display: flex; align-items: center; gap: 0.5rem; justify-content: flex-start;">
+                <i class="ph-bold ph-device-mobile"></i> Homescreen-Shortcut erstellen
+            </h2>
+            <p style="font-size: 0.9rem; color: var(--text-muted); margin-top: 0.25rem;">
+                Erstelle ein Icon auf deinem Smartphone-Homescreen, das diesen Chat öffnet und deine wiederkehrende Nachricht mit nur einem Fingertipp sofort absendet.
+            </p>
+            <form id="shortcut-form" style="margin-top: 1rem; display: flex; flex-direction: column; gap: 1rem;">
+                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    <label for="shortcut-title-input" style="font-size: 0.9rem; font-weight: 500;">Name auf dem Homescreen</label>
+                    <input type="text" id="shortcut-title-input" placeholder="z. B. Kaffee eintragen" maxlength="80" class="text-input" style="padding: 0.5rem; border-radius: 0.25rem; border: 1px solid var(--border-color); background-color: var(--bg-color); color: var(--text-main); font-family: inherit;">
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    <label for="shortcut-prompt-input" style="font-size: 0.9rem; font-weight: 500;">Wiederkehrende Nachricht</label>
+                    <textarea id="shortcut-prompt-input" placeholder="Welche Nachricht soll beim Antippen automatisch gesendet werden?" class="prompt-textarea" rows="3" required></textarea>
+                </div>
+                <div id="shortcut-error-banner" style="display: none; padding: 0.5rem 0.75rem; border-radius: 4px; background-color: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #ef4444; font-size: 0.85rem;"></div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 0.5rem;">
+                    <button type="button" class="secondary-btn" id="close-shortcut-btn">Abbrechen</button>
+                    <button type="submit" class="primary-btn" id="activate-shortcut-setup-btn">Einrichtungs-Ansicht aktivieren</button>
+                </div>
+            </form>
         </div>
     </div>
 

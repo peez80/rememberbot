@@ -2,7 +2,7 @@
  * Main application orchestrator for RememberBot.
  */
 
-import { state, setCurrentSessionId } from './state.js';
+import { state, setCurrentSessionId, savePendingShortcut, consumePendingShortcut } from './state.js';
 import { isImageFile } from './utils/dom.js';
 import * as api from './api/client.js';
 import { readSSEStream } from './api/sse.js';
@@ -53,9 +53,94 @@ document.addEventListener("DOMContentLoaded", () => {
     const importSessionInput = document.getElementById("import-session-input");
     const importStatusText = document.getElementById("import-status-text");
 
+    const openShortcutModalBtn = document.getElementById("open-shortcut-modal-btn");
+    const closeShortcutBtn = document.getElementById("close-shortcut-btn");
+    const shortcutForm = document.getElementById("shortcut-form");
+    const shortcutTitleInput = document.getElementById("shortcut-title-input");
+    const shortcutPromptInput = document.getElementById("shortcut-prompt-input");
+    const shortcutErrorBanner = document.getElementById("shortcut-error-banner");
+    const shortcutSetupBanner = document.getElementById("shortcut-setup-banner");
+    const shortcutBannerTitle = document.getElementById("shortcut-banner-title");
+    const shortcutBannerPrompt = document.getElementById("shortcut-banner-prompt");
+    const copyShortcutLinkBtn = document.getElementById("copy-shortcut-link-btn");
+    const exitShortcutSetupBtn = document.getElementById("exit-shortcut-setup-btn");
+
+    const DEFAULT_DOCUMENT_TITLE = "RememberBot - Persistent Agentic AI Chat";
+    const SHORTCUT_SETUP_GUARD_KEY = "shortcut_setup_guard";
+    const SAFE_SESSION_ID_REGEX = /^[a-zA-Z0-9_-]{1,64}$/;
+
     let activeExportAbortController = null;
     let activeImportAbortController = null;
     let modelCatalog = null;
+
+    const applySessionIconToTouchIcons = async (sessionId) => {
+        if (!sessionId) return;
+        const session = state.lastSessions?.find(s => s.id === sessionId);
+        if (!session || !session.has_icon) return;
+        try {
+            const res = await fetch(`/api/sessions/${sessionId}/icon`);
+            if (!res.ok) return;
+            const svgText = await res.text();
+            const svgBlob = new Blob([svgText], { type: "image/svg+xml;charset=utf-8" });
+            const url = URL.createObjectURL(svgBlob);
+            const img = new Image();
+            await new Promise((resolve, reject) => {
+                img.onload = resolve;
+                img.onerror = reject;
+                img.src = url;
+            });
+            const canvas = document.createElement("canvas");
+            canvas.width = 192;
+            canvas.height = 192;
+            const ctx = canvas.getContext("2d");
+            if (ctx) {
+                ctx.drawImage(img, 0, 0, 192, 192);
+                const pngDataUrl = canvas.toDataURL("image/png");
+                const appleIcon = document.getElementById("apple-touch-icon");
+                const favIcon = document.getElementById("favicon-link");
+                if (appleIcon) appleIcon.href = pngDataUrl;
+                if (favIcon) favIcon.href = pngDataUrl;
+            }
+            URL.revokeObjectURL(url);
+        } catch (_) {}
+    };
+
+    const resetTouchIconsAndTitle = () => {
+        document.title = DEFAULT_DOCUMENT_TITLE;
+        const appleIcon = document.getElementById("apple-touch-icon");
+        const favIcon = document.getElementById("favicon-link");
+        if (appleIcon) appleIcon.href = "/static/favicon.png";
+        if (favIcon) favIcon.href = "/static/favicon.png";
+    };
+
+    const showShortcutSetupBanner = ({ sessionId, prompt, title }) => {
+        state.shortcutSetupActive = true;
+        if (title) {
+            document.title = title;
+        }
+        if (shortcutBannerTitle) {
+            shortcutBannerTitle.textContent = title || "Shortcut";
+        }
+        if (shortcutBannerPrompt) {
+            shortcutBannerPrompt.textContent = prompt || "";
+        }
+        if (shortcutSetupBanner) {
+            shortcutSetupBanner.style.display = "flex";
+        }
+        applySessionIconToTouchIcons(sessionId);
+    };
+
+    const exitShortcutSetupMode = () => {
+        state.shortcutSetupActive = false;
+        try {
+            sessionStorage.removeItem(SHORTCUT_SETUP_GUARD_KEY);
+        } catch (_) {}
+        if (shortcutSetupBanner) {
+            shortcutSetupBanner.style.display = "none";
+        }
+        resetTouchIconsAndTitle();
+        window.history.replaceState({}, document.title, window.location.pathname);
+    };
 
     const ensureModelCatalogLoaded = async () => {
         if (modelCatalog) return;
@@ -413,12 +498,19 @@ document.addEventListener("DOMContentLoaded", () => {
             chatView.removeTypingIndicator();
             stopPollingSession(sessionId);
         }
+
+        if (state.shortcutErrorNotice) {
+            chatView.appendErrorMessage(state.shortcutErrorNotice);
+        }
         return true;
     };
 
     // Select session
     const selectSession = async (sessionId, forceReload = false) => {
         const isSwitchingSession = (state.currentSessionId !== sessionId);
+        if (isSwitchingSession && state.currentSessionId !== null) {
+            state.shortcutErrorNotice = null;
+        }
         if (!forceReload && !isSwitchingSession && state.activeSubmittingSessionId === sessionId) {
             return false;
         }
@@ -452,7 +544,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const executeSelect = async () => {
             try {
                 // Fetch settings in parallel without blocking history rendering
-                api.getSessionSettings(sessionId).then(async (promptRes) => {
+                const settingsPromise = api.getSessionSettings(sessionId).then(async (promptRes) => {
                     if (requestId !== state.selectSessionCounter || state.currentSessionId !== sessionId) return;
                     if (promptRes && promptRes.ok) {
                         try {
@@ -476,6 +568,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         } catch (_) {}
                     }
                 }).catch(() => {});
+                state.activeSettingsPromise = settingsPromise;
 
                 const historyRes = await api.getSessionHistory(sessionId);
 
@@ -652,7 +745,39 @@ document.addEventListener("DOMContentLoaded", () => {
                 return;
             }
 
+            state.lastSessions = sessions;
             sidebarView.renderSessionList(sessions, selectSession, deleteSessionPrompt);
+
+            if (state.shortcutSetupActive && state.currentSessionId) {
+                applySessionIconToTouchIcons(state.currentSessionId);
+            }
+
+            const pendingShortcut = consumePendingShortcut();
+            if (pendingShortcut) {
+                const targetSession = sessions.find(s => s.id === pendingShortcut.sessionId);
+                if (targetSession) {
+                    const loaded = await selectSession(targetSession.id, true);
+                    if (state.activeSettingsPromise) {
+                        try {
+                            await state.activeSettingsPromise;
+                        } catch (_) {}
+                    }
+                    if (loaded && pendingShortcut.autosend && messageInput && chatForm) {
+                        messageInput.value = pendingShortcut.prompt;
+                        if (typeof chatForm.requestSubmit === "function") {
+                            chatForm.requestSubmit();
+                        } else {
+                            chatForm.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+                        }
+                    }
+                    return;
+                } else {
+                    state.shortcutErrorNotice = "Der Ziel-Chat für diesen Homescreen-Shortcut wurde nicht gefunden.";
+                    setCurrentSessionId(sessions[0].id);
+                    await selectSession(sessions[0].id, true);
+                    return;
+                }
+            }
 
             if (!state.currentSessionId || !sessions.find(s => s.id === state.currentSessionId)) {
                 selectSession(sessions[0].id);
@@ -677,6 +802,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const text = messageInput ? messageInput.value.trim() : "";
             if (!text && state.selectedFiles.length === 0) return;
 
+            state.shortcutErrorNotice = null;
             const submittedSessionId = state.currentSessionId;
             const isBusy = (state.activeSubmissionsBySession.get(submittedSessionId) || 0) > 0 || state.activeSubmittingSessionId === submittedSessionId;
             const activeCount = (state.activeSubmissionsBySession.get(submittedSessionId) || 0) + 1;
@@ -1036,6 +1162,66 @@ document.addEventListener("DOMContentLoaded", () => {
     if (systemPromptBtn) systemPromptBtn.addEventListener("click", modals.openSystemPromptModal);
     if (closePromptBtn) closePromptBtn.addEventListener("click", modals.closeSystemPromptModal);
 
+    // Homescreen shortcut modal & banner events
+    if (openShortcutModalBtn) {
+        openShortcutModalBtn.addEventListener("click", modals.openShortcutModal);
+    }
+    if (closeShortcutBtn) {
+        closeShortcutBtn.addEventListener("click", modals.closeShortcutModal);
+    }
+    if (exitShortcutSetupBtn) {
+        exitShortcutSetupBtn.addEventListener("click", exitShortcutSetupMode);
+    }
+    if (copyShortcutLinkBtn) {
+        copyShortcutLinkBtn.addEventListener("click", async () => {
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(window.location.href);
+                }
+                const origHtml = copyShortcutLinkBtn.innerHTML;
+                copyShortcutLinkBtn.innerHTML = '<i class="ph-bold ph-check"></i> Kopiert!';
+                setTimeout(() => {
+                    copyShortcutLinkBtn.innerHTML = origHtml;
+                }, 1500);
+            } catch (_) {}
+        });
+    }
+    if (shortcutForm) {
+        shortcutForm.addEventListener("submit", (e) => {
+            e.preventDefault();
+            if (!state.currentSessionId) return;
+
+            const promptText = shortcutPromptInput ? shortcutPromptInput.value.trim() : "";
+            const session = state.lastSessions?.find(s => s.id === state.currentSessionId);
+            const defaultTitle = session && session.title ? session.title : "RememberBot";
+            const shortcutTitle = (shortcutTitleInput ? shortcutTitleInput.value.trim() : "") || defaultTitle;
+
+            if (!promptText) {
+                if (shortcutErrorBanner) {
+                    shortcutErrorBanner.textContent = "Bitte gib eine Nachricht ein, die gesendet werden soll.";
+                    shortcutErrorBanner.style.display = "block";
+                }
+                return;
+            }
+
+            const params = new URLSearchParams();
+            params.set("session", state.currentSessionId);
+            params.set("prompt", promptText);
+            params.set("autosend", "1");
+            if (shortcutTitle) {
+                params.set("title", shortcutTitle);
+            }
+            const targetSearch = `?${params.toString()}`;
+
+            try {
+                sessionStorage.setItem(SHORTCUT_SETUP_GUARD_KEY, targetSearch);
+            } catch (_) {}
+
+            modals.closeShortcutModal();
+            window.location.search = targetSearch;
+        });
+    }
+
     if (exportCancelBtn) {
         exportCancelBtn.addEventListener("click", () => {
             if (activeExportAbortController) {
@@ -1366,7 +1552,7 @@ document.addEventListener("DOMContentLoaded", () => {
         handleForegroundWakeup();
     });
 
-    // Initial Auth Check and Error Handling
+    // Initial Auth Check, Shortcut URL Handling and Error Handling
     (async () => {
         const urlParams = new URLSearchParams(window.location.search);
         const errorParam = urlParams.get("error");
@@ -1385,6 +1571,37 @@ document.addEventListener("DOMContentLoaded", () => {
                 errorBanner.style.display = "block";
             }
             window.history.replaceState({}, document.title, window.location.pathname);
+        } else {
+            const sessionParam = (urlParams.get("session") || "").trim();
+            const promptParam = (urlParams.get("prompt") || "").trim();
+            const autosendParam = (urlParams.get("autosend") || "").trim().toLowerCase();
+            const titleParam = (urlParams.get("title") || "").trim();
+            const isValidSessionId = SAFE_SESSION_ID_REGEX.test(sessionParam);
+
+            let setupGuardSearch = null;
+            try {
+                setupGuardSearch = sessionStorage.getItem(SHORTCUT_SETUP_GUARD_KEY);
+            } catch (_) {}
+
+            if (isValidSessionId && setupGuardSearch && setupGuardSearch === window.location.search) {
+                setCurrentSessionId(sessionParam);
+                showShortcutSetupBanner({
+                    sessionId: sessionParam,
+                    prompt: promptParam,
+                    title: titleParam || "Shortcut"
+                });
+            } else if (isValidSessionId && promptParam && (autosendParam === "1" || autosendParam === "true")) {
+                savePendingShortcut({
+                    sessionId: sessionParam,
+                    prompt: promptParam,
+                    autosend: true,
+                    title: titleParam
+                });
+                window.history.replaceState({}, document.title, window.location.pathname);
+            } else if (isValidSessionId && !promptParam) {
+                setCurrentSessionId(sessionParam);
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
         }
 
         try {

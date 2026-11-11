@@ -220,4 +220,35 @@ export const closeImportModal = () => {
     if (modal) modal.style.display = 'none';
 };
 
+export const getShortcutModal = () => document.getElementById("shortcut-modal");
+
+export const openShortcutModal = () => {
+    if (!state.currentSessionId) return;
+    closeSystemPromptModal();
+    const session = state.lastSessions?.find(s => s.id === state.currentSessionId);
+    const titleInput = document.getElementById("shortcut-title-input");
+    const promptInput = document.getElementById("shortcut-prompt-input");
+    const errorBanner = document.getElementById("shortcut-error-banner");
+
+    if (titleInput) {
+        titleInput.value = session && session.title ? session.title : "RememberBot";
+    }
+    if (promptInput && !promptInput.value) {
+        promptInput.value = "";
+    }
+    if (errorBanner) {
+        errorBanner.style.display = "none";
+        errorBanner.textContent = "";
+    }
+
+    const modal = getShortcutModal();
+    if (modal) modal.style.display = "flex";
+};
+
+export const closeShortcutModal = () => {
+    const modal = getShortcutModal();
+    if (modal) modal.style.display = "none";
+};
+
+
 
