@@ -2,7 +2,7 @@
  * Main application orchestrator for RememberBot.
  */
 
-import { state, setCurrentSessionId, savePendingShortcut, consumePendingShortcut } from './state.js';
+import { state, setCurrentSessionId, savePendingShortcut, consumePendingShortcut, peekPendingShortcut } from './state.js';
 import { isImageFile } from './utils/dom.js';
 import * as api from './api/client.js';
 import { readSSEStream } from './api/sse.js';
@@ -598,7 +598,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
                 return false;
             } finally {
-                if (state.activeSelectSessionId === sessionId) {
+                if (state.activeSelectSessionPromise === selectPromise) {
                     state.activeSelectSessionPromise = null;
                     state.activeSelectSessionId = null;
                 }
@@ -752,17 +752,24 @@ document.addEventListener("DOMContentLoaded", () => {
                 applySessionIconToTouchIcons(state.currentSessionId);
             }
 
-            const pendingShortcut = consumePendingShortcut();
+            const pendingShortcut = peekPendingShortcut();
             if (pendingShortcut) {
                 const targetSession = sessions.find(s => s.id === pendingShortcut.sessionId);
                 if (targetSession) {
-                    const loaded = await selectSession(targetSession.id, true);
+                    let loaded = await selectSession(targetSession.id, false);
+                    if (!loaded && state.currentSessionId === targetSession.id) {
+                        loaded = await syncSessionWithRetry(targetSession.id, false);
+                    }
                     if (state.activeSettingsPromise) {
                         try {
-                            await state.activeSettingsPromise;
+                            await Promise.race([
+                                state.activeSettingsPromise,
+                                new Promise(res => setTimeout(res, 1200))
+                            ]);
                         } catch (_) {}
                     }
                     if (loaded && pendingShortcut.autosend && messageInput && chatForm) {
+                        consumePendingShortcut();
                         messageInput.value = pendingShortcut.prompt;
                         if (typeof chatForm.requestSubmit === "function") {
                             chatForm.requestSubmit();
@@ -772,6 +779,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     }
                     return;
                 } else {
+                    consumePendingShortcut();
                     state.shortcutErrorNotice = "Der Ziel-Chat für diesen Homescreen-Shortcut wurde nicht gefunden.";
                     setCurrentSessionId(sessions[0].id);
                     await selectSession(sessions[0].id, true);
@@ -1591,6 +1599,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     title: titleParam || "Shortcut"
                 });
             } else if (isValidSessionId && promptParam && (autosendParam === "1" || autosendParam === "true")) {
+                setCurrentSessionId(sessionParam);
                 savePendingShortcut({
                     sessionId: sessionParam,
                     prompt: promptParam,

@@ -47,9 +47,8 @@ export function savePendingShortcut(action) {
     } catch (_) {}
 }
 
-export function consumePendingShortcut() {
+export function peekPendingShortcut() {
     let payload = state.pendingShortcutAction;
-    state.pendingShortcutAction = null;
 
     if (!payload) {
         try {
@@ -60,16 +59,23 @@ export function consumePendingShortcut() {
         } catch (_) {}
     }
 
-    try {
-        localStorage.removeItem(PENDING_SHORTCUT_STORAGE_KEY);
-    } catch (_) {}
-
     if (!payload || !payload.sessionId || !payload.prompt) {
         return null;
     }
     if (payload.expiresAt && Date.now() > payload.expiresAt) {
         return null;
     }
+    return payload;
+}
+
+export function consumePendingShortcut() {
+    const payload = peekPendingShortcut();
+    state.pendingShortcutAction = null;
+
+    try {
+        localStorage.removeItem(PENDING_SHORTCUT_STORAGE_KEY);
+    } catch (_) {}
+
     return payload;
 }
 

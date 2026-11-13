@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import pytest
@@ -408,3 +409,137 @@ async def test_shortcut_nonexistent_session_shows_error_without_sending_e2e():
         assert len(chat_calls) == 0
 
         await browser.close()
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_shortcut_when_chat_history_is_slow_to_load_e2e():
+    """
+    Verify that when opening a shortcut and the chat history takes longer to load (> 300ms),
+    even if the user previously had a different session open and the browser triggers
+    foreground/focus wakeup events, the shortcut message is reliably and automatically sent.
+    """
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+
+        # Simulate user previously viewing 'sess-previous'
+        await page.add_init_script("localStorage.setItem('currentSessionId', 'sess-previous');")
+
+        async def auth_route(route):
+            await asyncio.sleep(0.1)
+            await route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"authenticated": true, "username": "testuser"}'
+            )
+
+        await page.route("**/api/auth/status", auth_route)
+
+        sessions_state = [
+            {"id": "sess-previous", "title": "Vorheriger Chat", "created_at": "2026-11-11T07:00:00Z", "has_icon": False},
+            {"id": "sess-target", "title": "Ernährungstagebuch", "created_at": "2026-11-10T07:00:00Z", "has_icon": False},
+        ]
+
+        histories = {
+            "sess-previous": [
+                {"id": "msg-prev-1", "text": "Alte Nachricht", "is_user": False, "timestamp": "2026-11-11T07:01:00Z"}
+            ],
+            "sess-target": [
+                {"id": "msg-target-old", "text": "Willkommen im Tagebuch", "is_user": False, "timestamp": "2026-11-10T07:01:00Z"}
+            ],
+        }
+        chat_calls = []
+
+        async def sessions_route(route):
+            await asyncio.sleep(0.1)
+            await route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(sessions_state)
+            )
+
+        await page.route("**/api/sessions", sessions_route)
+
+        await page.route("**/api/sessions/*/settings", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"prompt": "", "include_gps": false}'
+        ))
+
+        await page.route("**/api/sessions/*/status", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"id": "sess-target", "is_processing": false, "queued_count": 0, "is_generating_icon": false, "has_icon": false}'
+        ))
+
+        # Artificial delay of 400ms for sess-target history (exceeds 80ms retry window of syncSessionWithRetry)
+        async def history_route(route):
+            url = route.request.url
+            if "sess-target" in url:
+                await asyncio.sleep(0.4)
+                await route.fulfill(
+                    status=200,
+                    headers={"X-Is-Processing": "false"},
+                    content_type="application/json",
+                    body=json.dumps(histories["sess-target"])
+                )
+            else:
+                await route.fulfill(
+                    status=200,
+                    headers={"X-Is-Processing": "false"},
+                    content_type="application/json",
+                    body=json.dumps(histories.get("sess-previous", []))
+                )
+
+        await page.route("**/api/sessions/*/history", history_route)
+
+        async def chat_route(route):
+            url = route.request.url
+            post_data = route.request.post_data or ""
+            chat_calls.append({"url": url, "body": post_data})
+            histories["sess-target"].append({
+                "id": "msg-user-delayed-1",
+                "text": "1 Tasse Tee eintragen",
+                "is_user": True,
+                "timestamp": "2026-11-11T07:30:00Z"
+            })
+            await route.fulfill(
+                status=200,
+                content_type="text/event-stream",
+                body=_build_sse_response("Tee wurde eingetragen!")
+            )
+
+        await page.route("**/api/sessions/*/chat", chat_route)
+
+        shortcut_url = (
+            f"http://127.0.0.1:{SERVER_PORT}/?session=sess-target"
+            f"&prompt={quote('1 Tasse Tee eintragen')}&autosend=1&title={quote('Tee Shortcut')}"
+        )
+
+        # Trigger focus/pageshow events during load
+        async def on_dom_loaded():
+            try:
+                await asyncio.sleep(0.15)
+                await page.evaluate("window.dispatchEvent(new Event('focus'))")
+                await page.evaluate("window.dispatchEvent(new Event('pageshow'))")
+            except Exception:
+                pass
+
+        page.on("domcontentloaded", lambda: asyncio.create_task(on_dom_loaded()))
+
+        await page.goto(shortcut_url)
+
+        # 1. Target session must be selected
+        target_item = page.locator(".session-item[data-session-id='sess-target']")
+        await expect(target_item).to_have_class(re.compile(r"active"), timeout=8000)
+        await expect(page.locator("#header-chat-title")).to_have_text("Ernährungstagebuch", timeout=8000)
+
+        # 2. Message and AI reply MUST be sent and rendered even though loading was delayed!
+        await expect(page.locator(".user-message:has-text('1 Tasse Tee eintragen')")).to_be_visible(timeout=8000)
+        await expect(page.locator(".ai-message:has-text('Tee wurde eingetragen!')")).to_be_visible(timeout=8000)
+        assert len(chat_calls) == 1
+        assert "/api/sessions/sess-target/chat" in chat_calls[0]["url"]
+
+        await browser.close()
+
